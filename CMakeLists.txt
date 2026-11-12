@@ -120,3 +120,10 @@ if(PRISM_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# ---- 基准工具 -------------------------------------------------------------
+option(PRISM_BUILD_BENCH "构建 PrismBench 基准工具" OFF)
+
+if(PRISM_BUILD_BENCH)
+    add_subdirectory(bench)
+endif()
