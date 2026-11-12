@@ -107,9 +107,19 @@ tests/                  28 条单元测试与快照
 
 ## 文档
 
+`docs/` 不入 git，只在本地保留：
+
 - 设计：`docs/superpowers/specs/2026-11-12-prism-design.md`
 - 计划：`docs/superpowers/plans/2026-11-12-prism.md`
 - 验证记录：`docs/superpowers/verification/2026-11-12-prism-verification.md`
+
+## 许可
+
+PRISM 以 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）发布，全文见 `LICENSE`。
+
+选 AGPL-3.0 而不选 GPL-3.0，是因为 JUCE 8 的免费授权是 AGPLv3；没有商业授权时，分发基于 JUCE 8 的二进制必须按 AGPLv3。
+
+若今后购买 JUCE 商业授权，可改为 GPL-3.0 或其他许可。第三方组件与各自许可见 JUCE 与 VST3 SDK 的 LICENSE。
 
 ## 已知限制
 
