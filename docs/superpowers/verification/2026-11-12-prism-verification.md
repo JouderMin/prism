@@ -470,3 +470,108 @@ grep -rnE '\b(new|delete|malloc|free)\b' src tests | grep -v 'ScopedNoDenormals'
 - `pluginval 1.0.4` 的 AU 模式在本机返回 `Num plugins found: 0`（`PRISM.component`，以及第三方 `TBTECH Kirchhoff-EQ.component` 均如此）。结论：macOS 27 上该版本 pluginval 的 AU 扫描不可用，不能作为 AU 失败证据；AU 结论以 auval 为准。
 
 仍待人工确认：Standalone 启动并出声、Logic/Reaper 加载与延迟补偿、听感。
+
+---
+
+## t17 复验（HEAD 881d6d6，t15 分频点 + t16 读数格式）
+
+- 任务：t17，attempt `19ca3ffc-eb3c-455b-b36e-b7c58103f263`
+- HEAD：`881d6d6e02c8c603f5e943cfff4ae2d82119f7d7`（t15 `7923b76`、t16 `881d6d6`）；验证开始时 `git status --short` 为空。
+- 环境同 t8/t14；验证结束后仅本文件改动。
+
+### 1. 构建与测试
+
+```sh
+cmake --preset debug && cmake --build --preset debug --clean-first
+# exit 0；146 个目标；14 条 warning，全部来自 JUCE/vcpkg 头文件；src/tests 0 条
+
+cmake --preset release -DPRISM_COPY_PLUGINS=OFF --fresh && cmake --build --preset release --clean-first
+# exit 0；146 个目标；14 条 warning，全部来自 JUCE/vcpkg 头文件；src/tests 0 条
+```
+
+- debug 的 14 条 warning：2 条 VST3 SDK `fvariant.h`、12 条 `juce_CGMetalLayerRenderer_mac.h`；release 同源。
+- 两套 `PrismTests` 各 **28 条** `Starting tests`、0 条 `FAILED`、exit 0。
+- 关键实测（debug 与 release 一致）：
+  - 恒等：`1.19209e-7`（< 1e-6）。
+  - 压缩：1 kHz、−6 dBFS，`−5.46 dB`。**与 t14 的 −6.38 dB 不同**：t15 把 1 kHz 从段 4 移到段 3（500–1200），灵敏度与目标斜率不同。仍大于 3 dB，验收线未变。
+  - 冲激峰：样本 `1152`，值 `1.000000`（Dsp 与 Processor 两条路径）。
+  - 平滑：20 ms 后 `0.993262`；最大相邻差 `0.065263`。
+  - 段 1 @150 Hz：`−6.02 dB`（−6.02 ± 0.5 内）。
+  - 段 2 @40 Hz 泄漏：`−101.35 dB`。
+  - 单段 −6 dB 带外偏差：11 个新边界测点均 ≤`0.001 dB`（打印为 `0.000`/`−0.000`），最大泄漏 `−86.85 dB`（段 2 @75 Hz）。
+  - 96 kHz：重建 `2.38e-7`，段 1 @150 Hz `−5.98 dB`。
+  - 11.025 kHz：重建 `2.24e-7`，`latencySamples()==1152` 有断言，无 jassert 触发。
+  - 90% 恢复：`232.5 / 202.8 / 175.5 / 155.2 / 139.7 / 125.2 / 114.0 ms`。
+
+### 2. 产物
+
+| 产物 | 架构 | codesign |
+|---|---|---|
+| `build/release/PrismAU_artefacts/Release/AU/PRISM.component` | Mach-O 64-bit bundle arm64 | exit 0 |
+| `build/release/PrismVST3_artefacts/Release/VST3/PRISM.vst3` | Mach-O 64-bit bundle arm64 | exit 0 |
+| `build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app` | Mach-O 64-bit executable arm64 | exit 0 |
+
+```sh
+codesign --verify --deep --strict build/release/PrismAU_artefacts/Release/AU/PRISM.component build/release/PrismVST3_artefacts/Release/VST3/PRISM.vst3 build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app
+# exit 0
+```
+
+AU plist：`type=aufx`、`subtype=Prsm`、`manufacturer=Stgz`、`version=256`、`CFBundleIdentifier=com.stargazer.prism`、`CFBundleShortVersionString=0.1.0`。
+
+### 3. 代码约束
+
+```sh
+grep -rnE '\b(new|delete|malloc|free)\b' src tests | grep -v 'ScopedNoDenormals' | head
+```
+
+只命中 3 条注释，无调用：`src/PluginEditor.h:14`、`src/Parameters.h:78`、`src/PluginProcessor.cpp:96`。
+
+- 分配仅在构造/`prepare`/`rebuild`：`src/dsp/Filterbank.cpp:46-58,107-119`、`src/dsp/PrismDsp.cpp:62-70`。
+- `PrismDsp::processBlock`（`src/dsp/PrismDsp.cpp:134-241`）、`Filterbank::processBlock`（`src/dsp/Filterbank.cpp:195-240`）、`OptoBand::processSample`（`src/dsp/OptoBand.cpp:54-75`）无分配；锁/IO grep 在 `src/` 无命中。
+- `jassert` 共 14 处。两处 `jassertfalse` 有 release return：`src/dsp/PrismDsp.cpp:141-143`、`src/dsp/Filterbank.cpp:210-211`。其余 12 处是 prepare/设计期的参数前置条件，release 编译为空；音频线程关键路径不依赖它们。
+- 限制：未做运行时分配器 hook。
+
+### 4. 界面读数
+
+`build/debug/editor-snapshot.png`：PNG 720×480、27924 字节。快照中 5 个读数：
+
+- AMOUNT `37 %`
+- SPECTRUM `+25 %`
+- MIX `100 %`
+- INPUT `3.7 dB`
+- OUTPUT `0.0 dB`
+
+dB 均 1 位小数，百分比均 0 位小数，SPECTRUM 正值带 `+`；频段标签为 `20–150 / 150–500 / 500–1.2k / 1.2–3k / 3–8k / 8–14k / 14k+`。
+
+测试侧：`ParamTests.cpp:40-51` 断言 5 个参数 × 6 个值的精确字符串；`EditorTests.cpp:124-130` 断言真实编辑器读数为 `37 %`、`+25 %`、`3.7 dB`。
+
+### 5. 文档一致性
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| 分频点 | PASS | `src/dsp/FirDesign.h:13` = 150/500/1200/3000/8000/14000；`README.md:86-92`、`spec:81,170-176`、`plan:22,131` 一致 |
+| 测试条数 | **FAIL** | 实际两套各 28 条；`README.md:10` 与 `README.md:105` 仍写 26 条 |
+| 读数格式 | PASS | `README.md:80`、`spec:239`；快照与测试断言一致 |
+| auval / pluginval 表述 | PASS（引用队长记录） | `README.md:11` 写 auval SUCCEEDED、pluginval 1.0.4 严格度 10；`README.md:117` 写 pluginval AU 模式限制；记录见本文件“t15 外部验证” |
+| spec 分频/泄漏/150 Hz | PASS | `spec:125-132`；实测 −86.85 dB、−6.02 dB |
+| plan 分频/150 Hz 验收 | PASS | `plan:22,131` |
+
+### 6. 验收
+
+| # | 条款 | 结果 | 证据 |
+|---|---|---|---|
+| 1 | debug/release 全量构建 exit 0，src/tests 0 warning | PASS | 各 146 目标；14 条 warning 全在 JUCE/vcpkg |
+| 2 | 两套测试全过，关键数字齐全 | PASS | 各 28 条、0 失败；§1 |
+| 3 | 三产物 arm64 thin、codesign、AU plist | PASS | §2 |
+| 4 | 无裸分配；音频线程零分配；14 处 jassert | PASS | §3；限制：无运行时 hook |
+| 5 | 界面读数 5 个文本格式 | PASS | §4 |
+| 6 | 文档与当前行为一致 | **FAIL** | 唯一不一致：`README.md:10`、`README.md:105` 仍写 26 条，实际 28 条 |
+
+**结论：FAIL。** 技术项（构建、28×2 测试、签名、代码约束、界面读数）全部通过；文档项有一处硬编码测试条数过期，不能给 pass。
+
+残留/边界：
+
+1. `README.md:10`、`README.md:105` 的“26 条”需改成“28 条”；改后重跑本条文档检查即可。
+2. 压缩实测 `−5.46 dB` 而非 t14 的 `−6.38 dB`，原因是 1 kHz 落段变化；仍满足 >3 dB，但报告不应继续引用 −6.38。
+3. auval/pluginval 结果来自队长 2026-11-12 21:41–21:45 的外部执行记录，verifier 未复跑；Standalone 启动、宿主加载与听感仍未做。
+4. 未做运行时分配器 hook。
