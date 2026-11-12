@@ -115,7 +115,7 @@ tests/                  28 条单元测试与快照
 
 ## 许可
 
-PRISM 以 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）发布，全文见 `LICENSE`。
+PRISM 以 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）发布，全文见 `LICENSE`。每个源码文件带 SPDX 头 `AGPL-3.0-or-later`。
 
 选 AGPL-3.0 而不选 GPL-3.0，是因为 JUCE 8 的免费授权是 AGPLv3；没有商业授权时，分发基于 JUCE 8 的二进制必须按 AGPLv3。
 
