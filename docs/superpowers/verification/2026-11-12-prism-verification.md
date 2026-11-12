@@ -216,3 +216,123 @@ codesign --verify --deep --strict --verbose=2 build/release/PrismStandalone_arte
 grep -rnE '\b(new|delete|malloc|free|calloc|realloc)\b' src tests --include='*.h' --include='*.cpp'
 grep -rnE 'mutex|lock_guard|ScopedLock|CriticalSection|spin|wait\(' src --include='*.h' --include='*.cpp'
 ```
+
+---
+
+## t12 复验（当前 HEAD）
+
+- 日期：2026-11-12
+- 验证人：verifier
+- 任务：t12，attempt `0c024448-f09d-4547-8ff5-9e1846b029af`
+- HEAD：`55ebde9395074349d1dbcf5dc94cf2c8438def16`（验证时；本段只改文档）
+- 工作区：验证开始时 `git status --short` 为空
+- 环境：同 t8；macOS 27.0.1 arm64、CMake 4.4.5、Ninja 1.13.2、Apple clang 21.0.0、JUCE 8.0.7（vcpkg `arm64-osx`）
+
+### 结论
+
+构建、测试、产物签名、代码约束均 PASS。文档一致性有 4 类问题（见 §5）：README:10 的 auval 声明是事实错误；spec §7 未覆盖 t11 界面细节且与“Logo / 可缩放”冲突；plan Task 3 仍是旧检测器与旧 `s_b`；spec 9.1 的单段压缩与快/尾段记录仍无用例。`auval`、`pluginval` 仍未执行。
+
+### 1. 构建
+
+| 构建 | 命令 | 结果 |
+|---|---|---|
+| debug | `cmake --preset debug` + `cmake --build --preset debug --clean-first` | exit 0；146 个目标；14 条 warning，`src/`、`tests/` 0 条 |
+| release | `cmake --preset release -DPRISM_COPY_PLUGINS=OFF --fresh` + `cmake --build --preset release --clean-first` | exit 0；146 个目标；14 条 warning，`src/`、`tests/` 0 条 |
+
+两套 warning 全部来自 vcpkg 的 JUCE 8.0.7 头文件（Metal 弃用、VST3 SDK `memset` 等），与本项目源码无关。日志：`/tmp/t12_build_debug.log`、`/tmp/t12_build_release.log`。
+
+### 2. 测试
+
+`./build/debug/PrismTests` 与 `./build/release/PrismTests` 均 exit 0，各 25 条 `Starting tests`、0 条失败。
+
+| 用例 | 实测（两套构建一致） |
+|---|---|
+| Dsp 恒等（AMOUNT 0） | 最大误差 `1.19209e-7` |
+| Dsp 压缩（1 kHz、−6 dBFS、AMOUNT 100） | 输出比输入低 `−6.38 dB` |
+| Dsp 延迟 | 冲激峰样本 `1152`，值 `1.000000` |
+| Dsp 平滑 | 20 ms 后 `0.993262`，最大相邻差 `0.065263` |
+| Filterbank 重建 | 最大误差 `2.38e-7` |
+| Filterbank 隔离 | 段 2 在 40 Hz 泄漏 `−32.79 dB` |
+| Filterbank 边缘 | 段 1 在 80 Hz `−5.99 dB` |
+| Filterbank 96 kHz | 重建误差 `2.98e-7` |
+| OptoBand 静态斜率 | `1.502 / 1.802 / 2.000 / 2.200 / 2.501 / 2.799 / 2.999` |
+| OptoBand 90% 恢复 | `232.5 / 202.8 / 175.5 / 155.2 / 139.7 / 125.2 / 114.0 ms` |
+| OptoBand 释放拟合 | 20%–80% 最大偏差 `0.189–0.378 dB` |
+| 参数状态往返 | `77 / −42 / 33 / 9.5 / −13.25`，version 仍为 1 |
+
+用例分布：Dsp 5、Editor 2、Filterbank 6、OptoBand 6、Parameters 4、Processor 2，共 25。
+
+### 3. 产物
+
+| 产物 | 路径 | 架构 | `codesign --verify --deep --strict` |
+|---|---|---|---|
+| AU | `build/release/PrismAU_artefacts/Release/AU/PRISM.component` | Mach-O arm64 bundle（thin） | exit 0，valid on disk / satisfies Designated Requirement |
+| VST3 | `build/release/PrismVST3_artefacts/Release/VST3/PRISM.vst3` | Mach-O arm64 bundle（thin） | exit 0，同上 |
+| Standalone | `build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app` | Mach-O arm64 executable（thin） | exit 0，同上 |
+
+AU `Info.plist` 实测：`AudioComponents[0].type=aufx`、`subtype=Prsm`、`manufacturer=Stgz`、`CFBundleIdentifier=com.stargazer.prism`、`CFBundleShortVersionString=0.1.0`、`AudioComponents[0].version=256`。与 `CMakeLists.txt:7,55-59` 一致。
+
+### 4. 代码约束
+
+- 裸分配：`grep -rnE '\b(new|delete|malloc|free)\b' src tests` 只命中 3 条注释（`src/PluginEditor.h:14`、`src/Parameters.h:46`、`src/PluginProcessor.cpp:96`），无调用。
+- 音频线程分配：分配只在 `Filterbank.cpp:46-58,98-119`、`PrismDsp.cpp:62-70` 的构造/`prepare` 路径；`PrismDsp::processBlock`（`PrismDsp.cpp:134-241`）、`Filterbank::processBlock`（`Filterbank.cpp:186-233`）、`OptoBand::processSample`（`OptoBand.cpp:54-75`）无 `new/delete/malloc/resize/assign/push_back`。
+- 锁与 I/O：`mutex|lock_guard|ScopedLock|CriticalSection|spin|wait\(` 在 `src/` 无命中；`File|fopen|printf|std::cout|http|socket` 无命中。
+- `jassert` 共 14 处，均有 release 路径保护：`PrismDsp.cpp:46-48,55` 是 `prepare` 前置条件；`PrismDsp.cpp:141` 后紧跟 `return`；`Filterbank.cpp:42-43,87,96,195,201` 为准备/缓冲检查，`201` 后 `return`；`FirDesign.cpp:14-16` 为设计参数检查。
+- 限制：以上为源码路径审查，未用分配器 hook 做运行时插桩。
+
+### 5. 文档一致性
+
+#### README
+
+一致项：
+
+- 构建命令与产物路径（`README.md:33-39`）与 CMakePresets/构建结果一致。
+- 延迟 1152、48 kHz 24.0 ms、96 kHz 12.0 ms（`README.md:27`）与 `kLatencySamples` 及换算一致。
+- 5 个参数范围/默认值（`README.md:71-77`）与 `src/Parameters.h:36-42` 一致。
+- 频段颜色、波长、γ、目标斜率（`README.md:81-89`）与 `src/dsp/BandTable.h:46-54` 一致。
+- “25 条自动化测试”（`README.md:10`）与实测一致。
+
+不一致：
+
+1. **`README.md:10` 写“AU 通过 `auval -v aufx Prsm Stgz`”，这是事实错误。** 本会话无法写 `~/Library/Audio/Plug-Ins/Components`，auval 从未执行；t8 与 t12 都把它列为待用户批准项。发布前必须删除该句或改成“待验证”。
+2. **`README.md:114` 写“释放曲线只有单一时间常数 60 ms”，不准确。** 实际释放 = 检测器 60 ms 与 `τ_ldr`（10–80 ms）叠加；spec 5.4 实测 90% 恢复为 114.0–232.5 ms。建议改成“检测器 release 60 ms，无独立双时间常数”。
+
+#### spec
+
+已覆盖：
+
+- 前馈增益律与 `1 − exp(...)` 权重：`spec:141-158`。
+- 重标 `s_b`（−18.14…−10.67）：`spec:168-178`。
+- 段外泄漏 −32.79 dB：`spec:128`。
+- 90% 恢复时间 114.0–232.5 ms：`spec:184`。
+
+遗漏/冲突：
+
+1. **§7 界面（`spec:228-236`）未覆盖 t11 实现**：静音辉光、en dash 频段标签、SPECTRUM 的“%”与正值“+”均未写。且 `spec:232` 要求 Stargazer 标志，实现只画 “PRISM” 文字；`spec:236` 要求“可缩放”，实现 `setResizable(false,false)`（`src/PluginEditor.cpp:48`）。spec 需补界面细节或改实现。
+2. **spec 5.3 列表编号缺 3**（`spec:141-152` 为 1、2、4、5），编辑问题。
+3. **spec 9.1 单段压缩仍无自动化用例**（`spec:356`）。`tests/FilterbankTests.cpp:241` 的 “single-band reconstruction” 是独立 FIR 卷积重建，不是“只压一段 6 dB、测两侧一个倍频程外偏差 < 0.5 dB”。
+4. **spec 9.1 快段/尾段未分别记录**（`spec:358`）。`tests/OptoBandTests.cpp:172` 只记录总 90% 恢复时间，未记录 fast/tail 两段。
+
+#### plan
+
+1. **Task 3 仍写旧检测器与旧 `s_b`**：`plan:208` 的 sensitivityDb 为 −12.1/−6.6/−4.5/−2.9/−0.7/+1.1/+1.6，`plan:214` 写系数 `exp(-1/(tau·fs))`。二者都与 spec 5.3/5.4、`src/dsp/OptoBand.cpp:31-32` 和 `BandTable.h:47-53` 相反。照 plan 实现会退回近瞬时跟踪。
+2. **Task 3 释放验收（`plan:192-195`）已过期**：要求 90% 恢复落在 `fastMs/2` 与 `slowMs*2`，当前测试改为总 90% 恢复 + 20%–80% 拟合；需同步 plan。
+3. Task 4 验收（`plan:254-259`）与实现相符：恒等 < 1e-4、压缩 > 3 dB、延迟 1152、平滑 20 ms。
+
+### 6. 未执行项
+
+1. **auval**：需把 `PRISM.component` 安装到 `~/Library/Audio/Plug-Ins/Components/`，本会话无写权限，等用户批准。命令 `auval -v aufx Prsm Stgz`，预期 `AU VALIDATION SUCCEEDED`。
+2. **pluginval**：本机未安装，未执行。
+3. Standalone 启动/设备出声、Logic/Reaper 加载与延迟补偿、听感：需 GUI/宿主/人耳，未执行。
+
+### 7. t12 验收
+
+| # | 条款 | 结果 | 证据 |
+|---|---|---|---|
+| 1 | debug/release 全量构建 exit 0，`src/`、`tests/` 0 warning | PASS | 各 146 目标；14 条 warning 全在 JUCE 头文件 |
+| 2 | 两套 PrismTests 各 25 条、0 失败、exit 0 | PASS | debug/release 各 25 条；关键数字见 §2 |
+| 3 | 三产物 arm64 thin，codesign 全过，AU plist 正确 | PASS | 三条 codesign exit 0；plist 值见 §3 |
+| 4 | 无裸分配；音频线程无分配/锁/IO；jassert 有 release 保护 | PASS | §4；限制：无运行时 hook |
+| 5 | README 构建命令/路径/延迟/参数/频段与代码一致，不一致处列出 | PASS | 枚举项一致；额外错误见 §5：README:10、README:114 |
+| 6 | spec/plan 覆盖当前实现，遗漏处列出 | PASS | 前馈、`s_b`、泄漏、90% 已覆盖；界面、plan Task 3、spec 9.1 缺口见 §5 |
+| 7 | 验证记录追加 t12 段并提交一次，工作区干净 | PASS | 本段与一次文档提交 |
