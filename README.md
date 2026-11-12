@@ -77,6 +77,8 @@ cmake --build --preset debug --target PrismTests
 | INPUT | −12–+24 dB | 0 | 输入增益 |
 | OUTPUT | −24–+12 dB | 0 | 输出增益 |
 
+旋钮读数：dB 固定 1 位小数（0.1 精度），百分比固定 0 位小数；SPECTRUM 正值带 `+`。
+
 ## 频段
 
 | 段 | 范围 | 颜色 | 波长 | γ | 目标斜率 |

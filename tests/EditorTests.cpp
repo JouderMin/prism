@@ -40,6 +40,7 @@ public:
             int sliderCount = 0;
             juce::Slider* amountKnob = nullptr;
             juce::Slider* spectrumKnob = nullptr;
+            juce::Slider* inputKnob = nullptr;
 
             for (int i = 0; i < editor->getNumChildComponents(); ++i)
             {
@@ -52,6 +53,9 @@ public:
 
                     if (slider->getName() == "SPECTRUM")
                         spectrumKnob = slider;
+
+                    if (slider->getName() == "INPUT")
+                        inputKnob = slider;
                 }
             }
 
@@ -72,6 +76,19 @@ public:
                 expectEquals (spectrumKnob->getTextFromValue (25.0), juce::String ("+25 %"));
                 expectEquals (spectrumKnob->getTextFromValue (0.0), juce::String ("0 %"));
                 expectEquals (spectrumKnob->getTextFromValue (-50.0), juce::String ("-50 %"));
+                expectEquals (spectrumKnob->getTextFromValue (33.33), juce::String ("+33 %"));
+            }
+
+            // SliderAttachment 构造后会覆盖格式化函数；这里确认编辑器在附件之后
+            // 重新装上了 parameters::formatValue，且输入文本也走同一条路径。
+            expect (inputKnob != nullptr);
+
+            if (inputKnob != nullptr)
+            {
+                expectEquals (inputKnob->getTextFromValue (3.7), juce::String ("3.7 dB"));
+                expectEquals (inputKnob->getTextFromValue (33.33), juce::String ("33.3 dB"));
+                expectEquals (inputKnob->getTextFromValue (-12.0), juce::String ("-12.0 dB"));
+                expectWithinAbsoluteError (inputKnob->valueFromTextFunction ("3.7 dB"), 3.7, 1.0e-4);
             }
 
             editor.reset();
@@ -79,11 +96,39 @@ public:
 
         beginTest ("editor snapshot is written as 720x480 PNG");
 
+        // 截图前把三个读数改成非默认值，便于用快照核对格式。
+        const auto setPlainValue = [&processor] (const char* id, float plainValue)
+        {
+            if (auto* parameter = processor.apvts.getParameter (id))
+                parameter->setValueNotifyingHost (parameter->convertTo0to1 (plainValue));
+        };
+
+        setPlainValue ("input", 3.7f);
+        setPlainValue ("spectrum", 25.0f);
+        setPlainValue ("amount", 37.0f);
+
         std::unique_ptr<juce::AudioProcessorEditor> snapshotEditor (processor.createEditor());
         expect (snapshotEditor != nullptr);
 
         if (snapshotEditor == nullptr)
             return;
+
+        for (int i = 0; i < snapshotEditor->getNumChildComponents(); ++i)
+        {
+            auto* slider = dynamic_cast<juce::Slider*> (snapshotEditor->getChildComponent (i));
+
+            if (slider == nullptr)
+                continue;
+
+            if (slider->getName() == "AMOUNT")
+                expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("37 %"));
+
+            if (slider->getName() == "SPECTRUM")
+                expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("+25 %"));
+
+            if (slider->getName() == "INPUT")
+                expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("3.7 dB"));
+        }
 
         const auto image = snapshotEditor->createComponentSnapshot (snapshotEditor->getLocalBounds());
 

@@ -28,6 +28,28 @@ constexpr std::array<ExpectedParam, 5> kExpectedParams { {
 
 constexpr std::array<float, 5> kRoundTripValues { { 77.0f, -42.0f, 33.0f, 9.5f, -13.25f } };
 
+// 读数格式：33.33 / 12.345 / -0.04 / 最小 / 最大 / 默认 的期望字符串。
+// 33.33 对 INPUT/OUTPUT 超出范围，只用于 formatValue 纯函数；参数 getText 会先夹取。
+struct FormatCase
+{
+    const char* id;
+    std::array<float, 6> values;
+    std::array<const char*, 6> expected;
+};
+
+constexpr std::array<FormatCase, 5> kFormatCases { {
+    { "amount",   { 33.33f, 12.345f, -0.04f, 0.0f, 100.0f, 50.0f },
+                  { "33 %", "12 %", "0 %", "0 %", "100 %", "50 %" } },
+    { "spectrum", { 33.33f, 12.345f, -0.04f, -100.0f, 100.0f, 0.0f },
+                  { "+33 %", "+12 %", "0 %", "-100 %", "+100 %", "0 %" } },
+    { "mix",      { 33.33f, 12.345f, -0.04f, 0.0f, 100.0f, 100.0f },
+                  { "33 %", "12 %", "0 %", "0 %", "100 %", "100 %" } },
+    { "input",    { 33.33f, 12.345f, -0.04f, -12.0f, 24.0f, 0.0f },
+                  { "33.3 dB", "12.3 dB", "0.0 dB", "-12.0 dB", "24.0 dB", "0.0 dB" } },
+    { "output",   { 33.33f, 12.345f, -0.04f, -24.0f, 12.0f, 0.0f },
+                  { "33.3 dB", "12.3 dB", "0.0 dB", "-24.0 dB", "12.0 dB", "0.0 dB" } },
+} };
+
 void setParameter (PrismAudioProcessor& processor, const char* id, float plainValue)
 {
     auto* parameter = processor.apvts.getParameter (id);
@@ -150,6 +172,58 @@ public:
         {
             PrismAudioProcessor processor;
             expectEquals (static_cast<int> (processor.apvts.state.getProperty ("version")), 1);
+        }
+
+        beginTest ("value formatting: 0.1 dB, integer percent, SPECTRUM plus sign");
+
+        {
+            PrismAudioProcessor processor;
+
+            for (const auto& formatCase : kFormatCases)
+            {
+                const prism::parameters::Spec* spec = nullptr;
+
+                for (const auto& candidate : prism::parameters::kSpecs)
+                    if (juce::String (candidate.id) == juce::String (formatCase.id))
+                        spec = &candidate;
+
+                expect (spec != nullptr, juce::String ("missing spec ") + formatCase.id);
+
+                if (spec == nullptr)
+                    continue;
+
+                auto* parameter = processor.apvts.getParameter (formatCase.id);
+                expect (parameter != nullptr, juce::String ("missing parameter ") + formatCase.id);
+
+                if (parameter == nullptr)
+                    continue;
+
+                for (size_t i = 0; i < formatCase.values.size(); ++i)
+                {
+                    const auto value = formatCase.values[i];
+                    const auto expected = juce::String (formatCase.expected[i]);
+                    const auto context = juce::String (formatCase.id) + " @ "
+                                       + juce::String (value, 3);
+
+                    expectEquals (prism::parameters::formatValue (*spec, value),
+                                  expected, context);
+
+                    // 参数文本走同一条路径；超出范围时由 NormalisableRange 夹到端点。
+                    const auto clamped = juce::jlimit (spec->minValue, spec->maxValue, value);
+                    expectEquals (parameter->getText (parameter->convertTo0to1 (value), 0),
+                                  prism::parameters::formatValue (*spec, clamped),
+                                  context + " (parameter text)");
+                }
+            }
+
+            // 文本回读：单位与 "+" 都要能吃进去。
+            const auto& spectrumSpec = prism::parameters::kSpecs[1];
+            const auto& inputSpec = prism::parameters::kSpecs[3];
+
+            expectWithinAbsoluteError (prism::parameters::parseValue (inputSpec, "3.7 dB"), 3.7f, 1.0e-5f);
+            expectWithinAbsoluteError (prism::parameters::parseValue (inputSpec, "+12.0 dB"), 12.0f, 1.0e-5f);
+            expectWithinAbsoluteError (prism::parameters::parseValue (spectrumSpec, "+25 %"), 25.0f, 1.0e-5f);
+            expectWithinAbsoluteError (prism::parameters::parseValue (spectrumSpec, "-50 %"), -50.0f, 1.0e-5f);
         }
     }
 };

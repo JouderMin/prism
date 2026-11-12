@@ -64,21 +64,25 @@ PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& proce
         configureKnob (*knob);
         knob->setName (spec.name);
 
-        // 数值读数直接用参数自己的格式化（含单位），SliderAttachment 只负责值。
-        if (auto* parameter = audioProcessor.apvts.getParameter (spec.id))
-        {
-            knob->textFromValueFunction = [parameter] (double value)
-            {
-                return parameter->getText (static_cast<float> (value), 0);
-            };
-        }
-
         addAndMakeVisible (*knob);
         knobs[static_cast<size_t> (i)] = std::move (knob);
 
         attachments[static_cast<size_t> (i)] =
             std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
                 audioProcessor.apvts, spec.id, *knobs[static_cast<size_t> (i)]);
+
+        // SliderAttachment 构造时会把 textFromValueFunction / valueFromTextFunction
+        // 改成它自己的版本（JUCE juce_ParameterAttachments.cpp），必须在其后再装一次，
+        // 让旋钮读数与参数文本共用 parameters::formatValue。
+        auto& knobRef = *knobs[static_cast<size_t> (i)];
+        knobRef.textFromValueFunction = [spec] (double value)
+        {
+            return prism::parameters::formatValue (spec, static_cast<float> (value));
+        };
+        knobRef.valueFromTextFunction = [spec] (const juce::String& text)
+        {
+            return static_cast<double> (prism::parameters::parseValue (spec, text));
+        };
     }
 
     // 先建好控件再定尺寸，setSize 会触发 resized()。
