@@ -2,7 +2,7 @@
 
 七段光电压缩器，Stargazer 出品。
 
-LA-2A 用一块电致发光面板照光敏电阻。PRISM 把信号拆成 7 个频段，每段用自己的颜色照一个光敏电阻：低频红、高频紫。7 条压缩曲线形状不同，求和后得到一种会随频谱变化的呼吸感。
+信号拆成 7 个频段，每段用自己的颜色照一个光敏电阻：低频红、高频紫。7 条压缩曲线形状不同，求和后得到一种会随频谱变化的呼吸感。
 
 JUCE 8.0.7 + CMake + C++20。当前提供 AU、VST3、Standalone 三种目标，macOS arm64，仅立体声。
 
@@ -97,23 +97,3 @@ auval -v aufx Prsm Stgz
 ```
 
 不装插件可以直接试听：`build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app`。
-
-### 代码约定
-
-- C++20。内存管理用 RAII：`std::unique_ptr`、`std::vector`、`std::array`、`juce::OwnedArray`。不得出现裸 `new`、`delete`、`malloc`、`free`。
-- 音频线程零分配、零锁、零 I/O。`prepareToPlay` 之外不做会阻塞的操作。
-- 参数只能走 APVTS，ID 是状态文件与自动化的稳定键，不得改名。当前状态版本为 1。
-- 只支持立体声。非 2 通道时 `processBlock` 清空输出并返回，不要静默处理。
-- 延迟固定在 1152 样本。改动分频抽头数会改延迟，必须同时改 `PrismDsp::kLatencySamples` 与 `setLatencySamples`。
-- 每个源码文件保留文件头的 SPDX 行。新增文件照抄现有头部，许可为 `AGPL-3.0-or-later`。
-- 每段曲线参数在 `src/dsp/BandTable.h`，属固定硬件特性，不做成用户参数。
-- 改动要有测试。验收值写在测试里，不靠耳朵兜底。
-- `docs/` 不入 git，设计、计划与验证记录只在本地保留。
-
-### 提交
-
-1. 开 issue 说明问题或动机，附上能复现的最小信息。
-2. 一个提交只做一件事。提交信息用 `feat:`、`fix:`、`test:`、`docs:`、`chore:` 前缀。
-3. 提交前跑完上面三项：构建、测试、无新警告。
-4. 发 PR 时写清改动范围、验证命令与结果、已知限制。
-5. 贡献按 AGPL-3.0-or-later 授权，与项目许可一致。
