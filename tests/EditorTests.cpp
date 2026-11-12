@@ -63,6 +63,43 @@ public:
 
             editor.reset();
         }
+
+        beginTest ("editor snapshot is written as 720x480 PNG");
+
+        std::unique_ptr<juce::AudioProcessorEditor> snapshotEditor (processor.createEditor());
+        expect (snapshotEditor != nullptr);
+
+        if (snapshotEditor == nullptr)
+            return;
+
+        const auto image = snapshotEditor->createComponentSnapshot (snapshotEditor->getLocalBounds());
+
+        expect (image.isValid());
+        expectEquals (image.getWidth(), kEditorWidth);
+        expectEquals (image.getHeight(), kEditorHeight);
+
+        const auto snapshotFile = juce::File::getSpecialLocation (juce::File::currentExecutableFile)
+                                      .getParentDirectory()
+                                      .getChildFile ("editor-snapshot.png");
+
+        snapshotFile.deleteFile();
+
+        juce::FileOutputStream stream (snapshotFile);
+        expect (stream.openedOk());
+
+        juce::PNGImageFormat png;
+        expect (png.writeImageToStream (image, stream));
+        stream.flush();
+
+        expect (snapshotFile.existsAsFile());
+        expectGreaterThan (snapshotFile.getSize(), static_cast<juce::int64> (0));
+
+        const auto reloaded = juce::ImageFileFormat::loadFrom (snapshotFile);
+        expectEquals (reloaded.getWidth(), kEditorWidth);
+        expectEquals (reloaded.getHeight(), kEditorHeight);
+
+        logMessage ("editor snapshot: " + snapshotFile.getFullPathName()
+                    + " (" + juce::String (snapshotFile.getSize()) + " bytes)");
     }
 };
 

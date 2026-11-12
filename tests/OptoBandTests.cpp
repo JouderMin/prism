@@ -63,6 +63,7 @@ public:
     {
         testStaticSlope();
         testReleaseLinearity();
+        testNinetyPercentRecovery();
         testSilenceAndTinyInput();
         testGainRange();
         testDetectorTimeConstants();
@@ -163,6 +164,54 @@ private:
                         + " dB, max deviation = " + juce::String (maxDeviation, 3) + " dB");
 
             expectLessThan (maxDeviation, 1.0);
+        }
+    }
+
+    void testNinetyPercentRecovery()
+    {
+        beginTest ("release: 90% recovery time from -6 to -18 dBFS");
+
+        for (int b = 0; b < static_cast<int> (prism::kBands.size()); ++b)
+        {
+            prism::OptoBand band (b);
+            band.prepare (kSampleRate);
+            band.setDrive (0.0f);
+
+            driveLevel (band, -18.0f, 1.0);
+            driveLevel (band, -6.0f, 0.6);
+
+            const auto settled6Db = 20.0 * std::log10 (juce::jmax (1.0e-6, static_cast<double> (band.currentGain())));
+
+            std::vector<float> gains;
+            gains.reserve (static_cast<size_t> (2.5 * kSampleRate));
+            driveLevel (band, -18.0f, 2.5, &gains);
+
+            const auto settled18Db = 20.0 * std::log10 (juce::jmax (1.0e-6, static_cast<double> (band.currentGain())));
+            const auto targetDb = settled6Db + 0.9 * (settled18Db - settled6Db);
+
+            auto recoverySamples = -1;
+
+            for (size_t i = 0; i < gains.size(); ++i)
+            {
+                const auto gainDb = 20.0 * std::log10 (juce::jmax (1.0e-6, static_cast<double> (gains[i])));
+
+                if (gainDb >= targetDb)
+                {
+                    recoverySamples = static_cast<int> (i);
+                    break;
+                }
+            }
+
+            expectGreaterThan (recoverySamples, 0);
+
+            const auto recoveryMs = 1000.0 * static_cast<double> (recoverySamples) / kSampleRate;
+
+            logMessage ("band " + juce::String (b + 1) + " 90% recovery = "
+                        + juce::String (recoveryMs, 1) + " ms (gain "
+                        + juce::String (settled6Db, 2) + " -> " + juce::String (settled18Db, 2) + " dB)");
+
+            expectGreaterThan (recoveryMs, 0.0);
+            expectLessThan (recoveryMs, 2500.0);
         }
     }
 

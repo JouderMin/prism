@@ -1,8 +1,11 @@
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <vector>
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
+#include <juce_dsp/juce_dsp.h>
 
 #include "dsp/Filterbank.h"
 #include "dsp/FirDesign.h"
@@ -73,6 +76,84 @@ void fillSine (juce::AudioBuffer<float>& buffer, double frequency, double sample
                                                                         * frequency * static_cast<double> (i) / sampleRate)));
 }
 
+/** 在测试内按 Filterbank::rebuild 的同一公式重建第 band 段的 2049 抽头系数。 */
+std::vector<float> bandCoefficients (int band, double sampleRate, int taps)
+{
+    const auto lowpassAt = [sampleRate, taps] (double cutoff)
+    {
+        return prism::designLowpass (static_cast<float> (cutoff), sampleRate, taps, prism::kKaiserBeta);
+    };
+
+    std::vector<float> previous (static_cast<size_t> (taps), 0.0f);
+
+    for (int k = 0; k < band; ++k)
+        previous = lowpassAt (prism::kCrossoverPointsHz[static_cast<size_t> (k)]);
+
+    if (band == prism::kNumBands - 1)
+    {
+        std::vector<float> top (static_cast<size_t> (taps), 0.0f);
+        top[static_cast<size_t> (taps / 2)] = 1.0f;
+
+        for (size_t i = 0; i < top.size(); ++i)
+            top[i] -= previous[i];
+
+        return top;
+    }
+
+    const auto low = lowpassAt (prism::kCrossoverPointsHz[static_cast<size_t> (band)]);
+    std::vector<float> coefficients (static_cast<size_t> (taps), 0.0f);
+
+    for (size_t i = 0; i < coefficients.size(); ++i)
+        coefficients[i] = low[i] - previous[i];
+
+    return coefficients;
+}
+
+/** 8192 样本 + 2049 抽头的线性卷积需要 16384 点 FFT，循环卷积不会卷回。 */
+constexpr int kConvolutionOrder = 14;
+constexpr int kConvolutionSize = 1 << kConvolutionOrder;
+
+void convolveWithCoefficients (const juce::AudioBuffer<float>& input,
+                               const std::vector<float>& coefficients,
+                               juce::AudioBuffer<float>& output)
+{
+    juce::dsp::FFT fft (kConvolutionOrder);
+
+    std::vector<float> coefficientSpectrum (static_cast<size_t> (2 * kConvolutionSize), 0.0f);
+    std::copy (coefficients.begin(), coefficients.end(), coefficientSpectrum.begin());
+    fft.performRealOnlyForwardTransform (coefficientSpectrum.data(), false);
+
+    output.setSize (input.getNumChannels(), input.getNumSamples(), false, false, true);
+
+    std::vector<float> spectrum (static_cast<size_t> (2 * kConvolutionSize), 0.0f);
+
+    for (int ch = 0; ch < input.getNumChannels(); ++ch)
+    {
+        std::fill (spectrum.begin(), spectrum.end(), 0.0f);
+
+        for (int i = 0; i < input.getNumSamples(); ++i)
+            spectrum[static_cast<size_t> (i)] = input.getSample (ch, i);
+
+        fft.performRealOnlyForwardTransform (spectrum.data(), false);
+
+        for (int k = 0; k < kConvolutionSize; ++k)
+        {
+            const auto re = spectrum[static_cast<size_t> (2 * k)];
+            const auto im = spectrum[static_cast<size_t> (2 * k + 1)];
+            const auto hr = coefficientSpectrum[static_cast<size_t> (2 * k)];
+            const auto hi = coefficientSpectrum[static_cast<size_t> (2 * k + 1)];
+
+            spectrum[static_cast<size_t> (2 * k)]     = re * hr - im * hi;
+            spectrum[static_cast<size_t> (2 * k + 1)] = re * hi + im * hr;
+        }
+
+        fft.performRealOnlyInverseTransform (spectrum.data());
+
+        for (int i = 0; i < input.getNumSamples(); ++i)
+            output.setSample (ch, i, spectrum[static_cast<size_t> (i)]);
+    }
+}
+
 } // namespace
 
 class FilterbankTests final : public juce::UnitTest
@@ -83,6 +164,7 @@ public:
     void runTest() override
     {
         testReconstructionAndDesign();
+        testSingleBandReconstruction();
         testIsolation();
         testCrossoverEdge();
         testLatency();
@@ -132,7 +214,7 @@ private:
         }
 
         logMessage ("max reconstruction error: " + juce::String (maxError, 9));
-        expectLessThan (maxError, 1.0e-4f);
+        expectLessThan (maxError, 1.0e-6f);
 
         // designLowpass 契约：长度 = taps、对称、DC = 1。
         const auto coefficients = prism::designLowpass (80.0f, sampleRate, 2049, 8.0);
@@ -152,6 +234,72 @@ private:
         logMessage ("designLowpass DC gain: " + juce::String (dcGain, 9));
         expectWithinAbsoluteError (dcGain, 1.0, 1.0e-5);
         expectLessThan (maxAsymmetry, 1.0e-7f);
+    }
+
+    void testSingleBandReconstruction()
+    {
+        beginTest ("single-band reconstruction: each band matches independent FIR convolution");
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int numSamples = 8192;
+        constexpr int taps = 2049;
+        // Filterbank 输出比线性卷积晚一个 hop（128 样本），与 latency 1152 = 1024 + 128 一致。
+        constexpr int hopDelay = prism::Filterbank::kBlockSize;
+
+        prism::Filterbank filterbank (taps);
+        filterbank.prepare (sampleRate);
+
+        juce::AudioBuffer<float> input (2, numSamples);
+        juce::Random random (4321);
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < numSamples; ++i)
+                input.setSample (ch, i, (random.nextFloat() * 2.0f - 1.0f) * 0.5f);
+
+        std::array<juce::AudioBuffer<float>, kNumBands> bands;
+        makeBands (bands, 2, numSamples);
+        processInBlocks (filterbank, input, bands);
+
+        for (int band = 0; band < kNumBands; ++band)
+        {
+            const auto coefficients = bandCoefficients (band, sampleRate, taps);
+
+            // 重建一：只保留该段、其余段置零后求和。恒等成立说明 7 段缓冲区
+            // 没有互相别名、没有共享写入；任何跨段污染都会在这里出现。
+            juce::AudioBuffer<float> isolated (2, numSamples);
+            isolated.clear();
+            isolated.addFrom (0, 0, bands[static_cast<size_t> (band)], 0, 0, numSamples, 1.0f);
+            isolated.addFrom (1, 0, bands[static_cast<size_t> (band)], 1, 0, numSamples, 1.0f);
+
+            auto isolationError = 0.0f;
+
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < numSamples; ++i)
+                    isolationError = juce::jmax (isolationError,
+                                                 std::abs (isolated.getSample (ch, i)
+                                                           - bands[static_cast<size_t> (band)].getSample (ch, i)));
+
+            expectEquals (isolationError, 0.0f);
+
+            // 重建二：用公开的 designLowpass 在测试内独立重建该段系数，做 16384 点
+            // 线性 FFT 卷积，再与 Filterbank 第 i 段输出逐样本比对。这是硬判据：
+            // 只有 overlap-save 的 128 样本分块、频谱乘和 hop 拼接都正确、且各段
+            // 之间没有串扰，两条路径才会在 1e-5 内一致；错位或跨段加窗会立刻暴露。
+            juce::AudioBuffer<float> convolution (2, numSamples);
+            convolveWithCoefficients (input, coefficients, convolution);
+
+            auto maxError = 0.0f;
+
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = hopDelay; i < numSamples; ++i)
+                    maxError = juce::jmax (maxError,
+                                           std::abs (bands[static_cast<size_t> (band)].getSample (ch, i)
+                                                     - convolution.getSample (ch, i - hopDelay)));
+
+            logMessage ("band " + juce::String (band + 1) + " independent convolution error: "
+                        + juce::String (maxError, 9));
+            expectLessThan (maxError, 1.0e-5f);
+        }
     }
 
     void testIsolation()
@@ -330,7 +478,7 @@ private:
         }
 
         logMessage ("96 kHz max reconstruction error: " + juce::String (maxError, 9));
-        expectLessThan (maxError, 1.0e-4f);
+        expectLessThan (maxError, 1.0e-6f);
 
         // 换采样率后 80 Hz 仍应为 −6 dB。
         filterbank.reset();
