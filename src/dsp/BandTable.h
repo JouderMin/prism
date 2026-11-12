@@ -22,6 +22,8 @@ struct BandParams
     std::uint32_t colorArgb;
     int wavelengthNm;
     float tauLdrSeconds;
+    // 设计目标，不是当前实现的独立时间常数：实际释放形状 = 检测器 60 ms
+    // 与 τ_ldr 一阶跟随叠加；这两个字段留作 M4 双时间常数释放的设计参考。
     float releaseFastMs;
     float releaseTailMs;
     float gamma;
@@ -42,13 +44,13 @@ inline constexpr float kSeriesResistanceOhm = 10.0e3f;
 inline constexpr float kMinGain = kSeriesResistanceOhm / (kSeriesResistanceOhm + kDarkResistanceOhm);
 
 inline constexpr std::array<BandParams, 7> kBands = { {
-    { "red", 0xffe05a4f, 700, 0.080f, 120.0f, 2500.0f, 0.90f, 1.5f, -12.1f },
-    { "orange", 0xffe8913a, 620, 0.065f, 100.0f, 1800.0f, 0.95f, 1.8f, -6.6f },
-    { "yellow", 0xffe3c34a, 580, 0.050f, 90.0f, 1400.0f, 1.00f, 2.0f, -4.5f },
-    { "green", 0xff5fbf7a, 530, 0.038f, 75.0f, 1000.0f, 1.05f, 2.2f, -2.9f },
-    { "cyan", 0xff4fbfc4, 500, 0.028f, 60.0f, 700.0f, 1.10f, 2.5f, -0.7f },
-    { "blue", 0xff5a7fd6, 470, 0.018f, 45.0f, 500.0f, 1.15f, 2.8f, 1.1f },
-    { "violet", 0xffa06bd6, 420, 0.010f, 30.0f, 350.0f, 1.20f, 3.0f, 1.6f },
+    { "red", 0xffe05a4f, 700, 0.080f, 120.0f, 2500.0f, 0.90f, 1.5f, -18.14f },
+    { "orange", 0xffe8913a, 620, 0.065f, 100.0f, 1800.0f, 0.95f, 1.8f, -14.33f },
+    { "yellow", 0xffe3c34a, 580, 0.050f, 90.0f, 1400.0f, 1.00f, 2.0f, -13.05f },
+    { "green", 0xff5fbf7a, 530, 0.038f, 75.0f, 1000.0f, 1.05f, 2.2f, -12.22f },
+    { "cyan", 0xff4fbfc4, 500, 0.028f, 60.0f, 700.0f, 1.10f, 2.5f, -11.26f },
+    { "blue", 0xff5a7fd6, 470, 0.018f, 45.0f, 500.0f, 1.15f, 2.8f, -10.72f },
+    { "violet", 0xffa06bd6, 420, 0.010f, 30.0f, 350.0f, 1.20f, 3.0f, -10.67f },
 } };
 
 static_assert (kBands.size() == 7, "spec 5.4 固定 7 段");

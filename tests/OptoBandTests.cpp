@@ -65,6 +65,7 @@ public:
         testReleaseLinearity();
         testSilenceAndTinyInput();
         testGainRange();
+        testDetectorTimeConstants();
     }
 
 private:
@@ -243,6 +244,63 @@ private:
                 expectGreaterOrEqual (minGain, prism::kMinGain - 1.0e-6f);
                 expectLessOrEqual (maxGain, 1.0f + 1.0e-6f);
             }
+        }
+    }
+
+    void testDetectorTimeConstants()
+    {
+        beginTest ("detector envelope: attack 10 ms +/-4, release 60 ms +/-25");
+
+        for (int b = 0; b < static_cast<int> (prism::kBands.size()); ++b)
+        {
+            prism::OptoBand band (b);
+            band.prepare (kSampleRate);
+            band.setDrive (0.0f);
+
+            // 恒值阶跃（不是正弦），包络按纯一阶上升/下降，63% 点即时间常数。
+            const auto step = ampForDbfs (-12.0f);
+            const auto attackTarget = 0.632f * step;
+
+            auto attackSamples = -1;
+
+            for (int i = 0; i < 20000; ++i)
+            {
+                band.processSample (step);
+
+                if (band.currentEnvelope() >= attackTarget)
+                {
+                    attackSamples = i + 1;
+                    break;
+                }
+            }
+
+            expectGreaterThan (attackSamples, 0);
+
+            const auto releaseStart = band.currentEnvelope();
+            const auto releaseTarget = 0.368f * releaseStart;
+            auto releaseSamples = -1;
+
+            for (int i = 0; i < 200000; ++i)
+            {
+                band.processSample (0.0f);
+
+                if (band.currentEnvelope() <= releaseTarget)
+                {
+                    releaseSamples = i + 1;
+                    break;
+                }
+            }
+
+            expectGreaterThan (releaseSamples, 0);
+
+            const auto attackMs = 1000.0 * static_cast<double> (attackSamples) / kSampleRate;
+            const auto releaseMs = 1000.0 * static_cast<double> (releaseSamples) / kSampleRate;
+
+            logMessage ("band " + juce::String (b + 1) + " attack = " + juce::String (attackMs, 2)
+                        + " ms, release = " + juce::String (releaseMs, 2) + " ms");
+
+            expectWithinAbsoluteError (attackMs, 10.0, 4.0);
+            expectWithinAbsoluteError (releaseMs, 60.0, 25.0);
         }
     }
 };

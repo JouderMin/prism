@@ -38,6 +38,9 @@ public:
     /** 当前增益，恒在 [kMinGain, 1]。 */
     float currentGain() const noexcept { return gain_; }
 
+    /** 当前整流包络，供检测器时间常数测试与诊断用。 */
+    float currentEnvelope() const noexcept { return env_; }
+
     int bandIndex() const noexcept { return bandIndex_; }
 
 private:

@@ -27,8 +27,9 @@ void OptoBand::prepare (double sampleRate)
 
     sampleRate_ = sampleRate;
 
-    attackCoef_ = static_cast<float> (std::exp (-1.0 / (kAttackSeconds * sampleRate_)));
-    releaseCoef_ = static_cast<float> (std::exp (-1.0 / (kReleaseSeconds * sampleRate_)));
+    // 一阶插值权重：env += (1 − exp(−1/(τ·fs)))·(x − env)，τ 秒到 63%。
+    attackCoef_ = static_cast<float> (1.0 - std::exp (-1.0 / (kAttackSeconds * sampleRate_)));
+    releaseCoef_ = static_cast<float> (1.0 - std::exp (-1.0 / (kReleaseSeconds * sampleRate_)));
     ldrFollow_ = static_cast<float> (1.0 - std::exp (-1.0 / (static_cast<double> (params_.tauLdrSeconds) * sampleRate_)));
 
     sensitivityGain_ = static_cast<float> (std::pow (10.0, static_cast<double> (params_.sensitivityDb) / 20.0));
