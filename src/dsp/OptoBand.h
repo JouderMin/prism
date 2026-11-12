@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include <array>
+
 #include "BandTable.h"
 
 namespace prism
@@ -35,6 +37,9 @@ namespace prism
 class OptoBand
 {
 public:
+    /** 每张曲线表的点数；表在 prepare 中生成，音频线程只读。 */
+    static constexpr int kTableSize = 1024;
+
     /** bandIndex 越界时夹到 [0, 6]。 */
     explicit OptoBand (int bandIndex = 0);
 
@@ -62,6 +67,8 @@ public:
     int bandIndex() const noexcept { return bandIndex_; }
 
 private:
+    void rebuildTables();
+
     int bandIndex_;
     BandParams params_;
 
@@ -71,6 +78,14 @@ private:
     float ldrFollow_ = 0.0f;
     float driveGain_ = 1.0f;
     float sensitivityGain_ = 1.0f;
+    float sensitivityLog2_ = 0.0f;
+    float driveDb_ = 0.0f;
+    float log2DriveScale_ = 0.0f;
+
+    std::array<float, kTableSize> lightTable_ {};
+    std::array<float, kTableSize> resistanceTable_ {};
+    std::array<float, kTableSize> driveGainTable_ {};
+    std::array<float, 4> lightChunkGain_ { 1.0f, 1.0f, 1.0f, 1.0f };
 
     float env_ = 0.0f;
     float ldr_ = kDarkResistanceOhm;

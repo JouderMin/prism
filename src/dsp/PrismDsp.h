@@ -133,15 +133,19 @@ private:
     int dryWrite_ = 0;
 
     std::array<float, kNumBands> autoGainDb_ {};
+    std::array<float, kNumBands> autoGainStart_ {};
+    std::array<float, kNumBands> autoGainTarget_ {};
+    std::array<float, kNumBands> autoGainCurrent_ {};
     float autoGainCoefficient_ = 0.0f;
+    int autoGainPhase_ = 0;
 
     std::array<std::atomic<float>, kNumBands> meters_ {};
 
     SmoothedValue amount_;
     SmoothedValue spectrum_;
     SmoothedValue mix_;
-    SmoothedValue inputDb_;
-    SmoothedValue outputDb_;
+    SmoothedValue inputGain_;
+    SmoothedValue outputGain_;
 
     EngineParams targets_;
 };

@@ -18,11 +18,39 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 
 namespace prism
 {
+
+/** 快速 log2：位拆分 + 三阶 atanh 级数，误差约 1e-5（log2 单位）。
+
+    仅用于查表索引；表值本身在 prepare 中用精确 pow 生成。
+*/
+inline float fastLog2 (float value) noexcept
+{
+    constexpr float kMinPositive = 1.0e-30f;
+    value = std::max (value, kMinPositive);
+
+    const auto bits = std::bit_cast<std::uint32_t> (value);
+    const auto exponent = static_cast<int> (bits >> 23) - 127;
+
+    const auto mantissaBits = (bits & 0x007fffffu) | 0x3f800000u;
+    const auto mantissa = std::bit_cast<float> (mantissaBits); // [1, 2)
+    const auto f = mantissa - 1.0f;
+
+    // log2(1+f) = 2/ln2 · atanh(f/(2+f))，|z| ≤ 1/3。
+    const auto z = f / (2.0f + f);
+    const auto z2 = z * z;
+    const auto series = z * (1.0f + z2 * (1.0f / 3.0f
+                                          + z2 * (1.0f / 5.0f
+                                                  + z2 * (1.0f / 7.0f))));
+
+    return static_cast<float> (exponent) + 2.8853900817779268f * series;
+}
 
 /** 每段固定的光电参数，数值照 spec 5.4。
 

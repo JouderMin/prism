@@ -16,6 +16,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with PRISM. If not, see <https://www.gnu.org/licenses/>.
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -70,6 +71,55 @@ float driveLevel (prism::OptoBand& band,
     return static_cast<float> (std::sqrt (sum / juce::jmax (1, count)));
 }
 
+/** 逐样本精确 pow 的参考实现，用于验证查表近似的误差上界。 */
+class ExactOpto
+{
+public:
+    ExactOpto (int bandIndex, float driveDb)
+        : params_ (prism::kBands[static_cast<size_t> (bandIndex)])
+    {
+        attack_ = 1.0 - std::exp (-1.0 / (0.001 * static_cast<double> (prism::kDetectorAttackMs) * kSampleRate));
+        release_ = 1.0 - std::exp (-1.0 / (0.001 * static_cast<double> (prism::kDetectorReleaseMs) * kSampleRate));
+        follow_ = 1.0 - std::exp (-1.0 / (static_cast<double> (params_.tauLdrSeconds) * kSampleRate));
+        driveGain_ = std::pow (10.0, static_cast<double> (driveDb) / 20.0);
+        sensitivity_ = std::pow (10.0, static_cast<double> (params_.sensitivityDb) / 20.0);
+    }
+
+    void process (float x)
+    {
+        const auto rectified = std::abs (static_cast<double> (x));
+        const auto coefficient = rectified > env_ ? attack_ : release_;
+        env_ += coefficient * (rectified - env_);
+
+        const auto ratio = std::max (env_ / static_cast<double> (prism::kReferenceLevel), 0.0);
+        const auto shaped = std::pow (ratio, static_cast<double> (prism::kLightExponent));
+        const auto light = std::max (driveGain_ * sensitivity_ * shaped,
+                                     static_cast<double> (1.0e-12f));
+
+        const auto targetResistance = static_cast<double> (prism::kDarkResistanceOhm)
+                                    / (1.0 + std::pow (light, static_cast<double> (params_.gamma)));
+        ldr_ += follow_ * (targetResistance - ldr_);
+
+        const auto linearGain = (static_cast<double> (prism::kSeriesResistanceOhm) + ldr_)
+                              / (static_cast<double> (prism::kSeriesResistanceOhm)
+                                 + static_cast<double> (prism::kDarkResistanceOhm));
+        gain_ = std::clamp (linearGain, static_cast<double> (prism::kMinGain), 1.0);
+    }
+
+    [[nodiscard]] double currentGain() const { return gain_; }
+
+private:
+    prism::BandParams params_;
+    double attack_ = 0.0;
+    double release_ = 0.0;
+    double follow_ = 0.0;
+    double driveGain_ = 1.0;
+    double sensitivity_ = 1.0;
+    double env_ = 0.0;
+    double ldr_ = static_cast<double> (prism::kDarkResistanceOhm);
+    double gain_ = 1.0;
+};
+
 } // namespace
 
 class OptoBandTests final : public juce::UnitTest
@@ -85,6 +135,7 @@ public:
         testSilenceAndTinyInput();
         testGainRange();
         testDetectorTimeConstants();
+        testFastMathMatchesExact();
     }
 
 private:
@@ -369,6 +420,62 @@ private:
             expectWithinAbsoluteError (attackMs, 10.0, 4.0);
             expectWithinAbsoluteError (releaseMs, 60.0, 25.0);
         }
+    }
+
+    void testFastMathMatchesExact()
+    {
+        beginTest ("table-driven optical curves match exact pow within 0.01 dB");
+
+        const float drives[] = { 0.0f, 24.0f };
+        constexpr int kNumLevels = 24;
+        constexpr double kSeconds = 0.35;
+        constexpr int kMeasuredTail = 2048;
+
+        auto worstOverall = 0.0f;
+
+        for (const auto drive : drives)
+        {
+            for (int b = 0; b < static_cast<int> (prism::kBands.size()); ++b)
+            {
+                auto worstForBand = 0.0f;
+
+                for (int levelIndex = 0; levelIndex < kNumLevels; ++levelIndex)
+                {
+                    const auto levelDbfs = -66.0f + 3.0f * static_cast<float> (levelIndex);
+
+                    prism::OptoBand fast (b);
+                    fast.prepare (kSampleRate);
+                    fast.setDrive (drive);
+
+                    ExactOpto exact (b, drive);
+
+                    const auto amp = ampForDbfs (levelDbfs);
+                    const auto numSamples = static_cast<int> (std::lround (kSeconds * kSampleRate));
+
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        const auto x = amp * static_cast<float> (std::sin (kTwoPi * kToneHz * i / kSampleRate));
+                        fast.processSample (x);
+                        exact.process (x);
+
+                        if (i >= numSamples - kMeasuredTail)
+                        {
+                            const auto fastDb = 20.0 * std::log10 (juce::jmax (1.0e-6, static_cast<double> (fast.currentGain())));
+                            const auto exactDb = 20.0 * std::log10 (juce::jmax (1.0e-6, exact.currentGain()));
+                            worstForBand = juce::jmax (worstForBand, static_cast<float> (std::abs (fastDb - exactDb)));
+                        }
+                    }
+                }
+
+                logMessage ("band " + juce::String (b + 1) + " drive " + juce::String (static_cast<double> (drive), 1)
+                            + " dB: max gain error = " + juce::String (static_cast<double> (worstForBand), 5) + " dB");
+
+                worstOverall = juce::jmax (worstOverall, worstForBand);
+                expectLessThan (worstForBand, 0.01f);
+            }
+        }
+
+        logMessage ("overall max gain error = " + juce::String (static_cast<double> (worstOverall), 5) + " dB");
     }
 };
 

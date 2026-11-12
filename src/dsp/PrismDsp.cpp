@@ -36,13 +36,16 @@ constexpr float kSpectrumTiltDb = 6.0f;
 // 参数平滑：一阶低通，时间常数 4 ms，5τ 正好 20 ms（约 99.3%）。
 constexpr double kParamSmoothingSeconds = 0.004;
 
-// auto-gain：500 ms 一阶低通跟踪每段压缩量。
+// auto-gain：500 ms 一阶低通跟踪每段压缩量；dB 均值每 32 样本更新，
+// 样本间对补偿增益线性插值，避免逐样本 log10/pow。
 constexpr double kAutoGainSeconds = 0.5;
+constexpr int kAutoGainUpdateSamples = 32;
 constexpr float kAutoGainLimitDb = 12.0f;
 constexpr float kAutoGainDeadbandDb = 0.1f;
 
 constexpr float kMinLogGain = 1.0e-6f;
 constexpr float kDriveClampDb = 60.0f;
+constexpr float kDbPerLog2 = 6.020599913279624f; // 20·log10(2)
 } // namespace
 
 PrismDsp::PrismDsp()
@@ -52,8 +55,17 @@ PrismDsp::PrismDsp()
     amount_.snap (defaults.amount01);
     spectrum_.snap (defaults.spectrum);
     mix_.snap (defaults.mix01);
-    inputDb_.snap (defaults.inputDb);
-    outputDb_.snap (defaults.outputDb);
+    inputGain_.snap (1.0f);
+    outputGain_.snap (1.0f);
+
+    for (auto& value : autoGainStart_)
+        value = 1.0f;
+
+    for (auto& value : autoGainTarget_)
+        value = 1.0f;
+
+    for (auto& value : autoGainCurrent_)
+        value = 1.0f;
 
     for (auto& meter : meters_)
         meter.store (0.0f, std::memory_order_relaxed);
@@ -92,14 +104,26 @@ void PrismDsp::prepare (double sampleRate, int maxBlockSize, int numChannels)
     for (auto& value : autoGainDb_)
         value = 0.0f;
 
+    for (auto& value : autoGainStart_)
+        value = 1.0f;
+
+    for (auto& value : autoGainTarget_)
+        value = 1.0f;
+
+    for (auto& value : autoGainCurrent_)
+        value = 1.0f;
+
+    autoGainPhase_ = 0;
+
     const auto autoGainSamples = kAutoGainSeconds * sampleRate_;
-    autoGainCoefficient_ = static_cast<float> (1.0 - std::exp (-1.0 / autoGainSamples));
+    autoGainCoefficient_ = static_cast<float> (
+        1.0 - std::exp (-static_cast<double> (kAutoGainUpdateSamples) / autoGainSamples));
 
     amount_.prepare (sampleRate_, kParamSmoothingSeconds);
     spectrum_.prepare (sampleRate_, kParamSmoothingSeconds);
     mix_.prepare (sampleRate_, kParamSmoothingSeconds);
-    inputDb_.prepare (sampleRate_, kParamSmoothingSeconds);
-    outputDb_.prepare (sampleRate_, kParamSmoothingSeconds);
+    inputGain_.prepare (sampleRate_, kParamSmoothingSeconds);
+    outputGain_.prepare (sampleRate_, kParamSmoothingSeconds);
 
     reset();
 }
@@ -124,14 +148,25 @@ void PrismDsp::reset()
     for (auto& value : autoGainDb_)
         value = 0.0f;
 
+    for (auto& value : autoGainStart_)
+        value = 1.0f;
+
+    for (auto& value : autoGainTarget_)
+        value = 1.0f;
+
+    for (auto& value : autoGainCurrent_)
+        value = 1.0f;
+
+    autoGainPhase_ = 0;
+
     for (auto& meter : meters_)
         meter.store (0.0f, std::memory_order_relaxed);
 
     amount_.snapToTarget();
     spectrum_.snapToTarget();
     mix_.snapToTarget();
-    inputDb_.snapToTarget();
-    outputDb_.snapToTarget();
+    inputGain_.snapToTarget();
+    outputGain_.snapToTarget();
 }
 
 void PrismDsp::setParams (const EngineParams& params) noexcept
@@ -145,8 +180,8 @@ void PrismDsp::setParams (const EngineParams& params) noexcept
     amount_.setTarget (targets_.amount01);
     spectrum_.setTarget (targets_.spectrum);
     mix_.setTarget (targets_.mix01);
-    inputDb_.setTarget (targets_.inputDb);
-    outputDb_.setTarget (targets_.outputDb);
+    inputGain_.setTarget (decibelsToGain (targets_.inputDb));
+    outputGain_.setTarget (decibelsToGain (targets_.outputDb));
 }
 
 void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
@@ -163,7 +198,7 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
     // 第一遍：输入增益逐样本平滑，写入预分配缓冲，同时作为干声源。
     for (int i = 0; i < numSamples; ++i)
     {
-        const auto gain = decibelsToGain (inputDb_.next());
+        const auto gain = inputGain_.next();
 
         for (int ch = 0; ch < numChannels; ++ch)
             inputGainBuffer_.getWritePointer (ch)[i] = buffer.getReadPointer (ch)[i] * gain;
@@ -180,11 +215,11 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
         const auto amount = amount_.next();
         const auto spectrum = spectrum_.next();
         const auto mix = mix_.next();
-        const auto outputGain = decibelsToGain (outputDb_.next());
+        const auto outputGain = outputGain_.next();
 
         // AMOUNT 直接缩放光强；0 时旁路光电段，保证恒等。
         const auto baseDriveDb = amount > 0.0f
-                                     ? 20.0f * std::log10 (amount) + kMaxAmountDriveDb
+                                     ? kDbPerLog2 * fastLog2 (amount) + kMaxAmountDriveDb
                                      : -kDriveClampDb;
 
         // 每段检测、光电、auto-gain；返回该段总增益。
@@ -206,19 +241,33 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
             if (amount <= 0.0f)
                 optoGain = 1.0f;
 
-            const auto gainDb = 20.0f * std::log10 (juce::jmax (optoGain, kMinLogGain));
+            const auto bandIndex = static_cast<size_t> (b);
 
-            auto& averageDb = autoGainDb_[static_cast<size_t> (b)];
-            averageDb += autoGainCoefficient_ * (gainDb - averageDb);
+            if (autoGainPhase_ == 0)
+            {
+                const auto gainDb = 20.0f * std::log10 (juce::jmax (optoGain, kMinLogGain));
 
-            // 反向补偿：不超过当前压缩量，也不超过 ±12 dB；均值 <0.1 dB 不补偿。
-            auto compensationDb = juce::jmin (-averageDb, -gainDb);
-            compensationDb = juce::jlimit (0.0f, kAutoGainLimitDb, compensationDb);
+                auto& averageDb = autoGainDb_[bandIndex];
+                averageDb += autoGainCoefficient_ * (gainDb - averageDb);
 
-            if (compensationDb < kAutoGainDeadbandDb)
-                compensationDb = 0.0f;
+                // 反向补偿：不超过当前压缩量，也不超过 ±12 dB；均值 <0.1 dB 不补偿。
+                auto compensationDb = juce::jmin (-averageDb, -gainDb);
+                compensationDb = juce::jlimit (0.0f, kAutoGainLimitDb, compensationDb);
 
-            return optoGain * decibelsToGain (compensationDb);
+                if (compensationDb < kAutoGainDeadbandDb)
+                    compensationDb = 0.0f;
+
+                autoGainStart_[bandIndex] = autoGainCurrent_[bandIndex];
+                autoGainTarget_[bandIndex] = decibelsToGain (compensationDb);
+            }
+
+            // 32 样本内线性推进；下一次更新时 start 正好落在上一目标上。
+            const auto ramp = static_cast<float> (autoGainPhase_ + 1)
+                            * (1.0f / static_cast<float> (kAutoGainUpdateSamples));
+            autoGainCurrent_[bandIndex] = autoGainStart_[bandIndex]
+                                        + (autoGainTarget_[bandIndex] - autoGainStart_[bandIndex]) * ramp;
+
+            return optoGain * autoGainCurrent_[bandIndex];
         };
 
         // 干声延时线：与分频器同样的 1152 样本延迟，保证 MIX 相位对齐。
@@ -272,6 +321,8 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
         if (numChannels > 1)
             buffer.getWritePointer (1)[i]
                 = (mix * wetRight + (1.0f - mix) * dryRight) * outputGain;
+
+        autoGainPhase_ = (autoGainPhase_ + 1) & (kAutoGainUpdateSamples - 1);
     }
 
     for (int b = 0; b < kNumBands; ++b)
