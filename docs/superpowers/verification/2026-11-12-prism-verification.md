@@ -336,3 +336,118 @@ AU `Info.plist` 实测：`AudioComponents[0].type=aufx`、`subtype=Prsm`、`manu
 | 5 | README 构建命令/路径/延迟/参数/频段与代码一致，不一致处列出 | PASS | 枚举项一致；额外错误见 §5：README:10、README:114 |
 | 6 | spec/plan 覆盖当前实现，遗漏处列出 | PASS | 前馈、`s_b`、泄漏、90% 已覆盖；界面、plan Task 3、spec 9.1 缺口见 §5 |
 | 7 | 验证记录追加 t12 段并提交一次，工作区干净 | PASS | 本段与一次文档提交 |
+
+## t14 终验（最终 HEAD）
+
+- 任务：t14，attempt `cf51ab26-6a52-44f8-97c7-7f0f18640b8e`
+- 验证开始 HEAD：`1e5b8b7`；验证期间队长提交 `c780285`（仅 `README.md` 测试条数 25→26），`src/`、`tests/`、`CMakeLists.txt` 未变。本段记录以 `c780285` 的代码字节为准。
+- 工作区：开始时 `git status --short` 为空；结束时仅本文件改动，提交后干净。
+- 环境同 t8：macOS 27.0.1（26A434），arm64；CMake 4.4.5；Ninja 1.13.2；Apple clang 21.0.0；JUCE 8.0.7（vcpkg `arm64-osx`）。
+
+### 1. 构建与测试
+
+全量构建（clean-first，证明不复用旧产物）：
+
+```sh
+cmake --preset debug && cmake --build --preset debug --clean-first
+# exit 0；146 个目标；14 条 warning，全部来自 JUCE/vcpkg 头文件
+
+cmake --preset release -DPRISM_COPY_PLUGINS=OFF --fresh && cmake --build --preset release --clean-first
+# exit 0；146 个目标；14 条 warning，全部来自 JUCE/vcpkg 头文件
+```
+
+- `src/`、`tests/` 的 warning 数：两套均为 0。debug 的 14 条为 2 条 VST3 SDK `fvariant.h`、12 条 `juce_CGMetalLayerRenderer_mac.h`；release 同源。
+- 合同 verify 命令与结果：
+
+```sh
+cmake --build --preset debug 2>&1 | tail -3 && ./build/debug/PrismTests 2>&1 | grep -c '^Starting tests in'
+# ninja: no work to do；26
+cmake --build --preset release 2>&1 | tail -3 && ./build/release/PrismTests 2>&1 | grep -c '^Starting tests in'
+# ninja: no work to do；26
+```
+
+- 两套 `PrismTests` 均 exit 0，各 26 条 `Starting tests`，0 条 `FAILED`。
+- 关键实测（debug 与 release 一致）：
+  - 恒等：`1.19209e-7`。
+  - 压缩：1 kHz、−6 dBFS，输出比输入低 `−6.38 dB`。
+  - 冲激峰：样本 `1152`，值 `1.000000`；Dsp 与 Processor 两条路径均一致。
+  - 平滑：20 ms 后 AMOUNT `0.993262`；最大相邻样本差 `0.065263`。
+  - 单段 −6 dB 带外偏差：最大 `−0.101 dB`（段 2 @ 40 Hz），其余测点 `0.000` 或 `−0.000 dB`；阈值 0.5 dB。
+  - 90% 恢复：`232.5 / 202.8 / 175.5 / 155.2 / 139.7 / 125.2 / 114.0 ms`。
+  - 分频重建：48 kHz `2.38e-7`，96 kHz `2.98e-7`。
+
+### 2. 产物
+
+| 产物 | 架构 | codesign |
+|---|---|---|
+| `build/release/PrismAU_artefacts/Release/AU/PRISM.component` | Mach-O 64-bit bundle arm64 | exit 0 |
+| `build/release/PrismVST3_artefacts/Release/VST3/PRISM.vst3` | Mach-O 64-bit bundle arm64 | exit 0 |
+| `build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app` | Mach-O 64-bit executable arm64 | exit 0 |
+
+合同 verify 命令：
+
+```sh
+codesign --verify --deep --strict build/release/PrismAU_artefacts/Release/AU/PRISM.component build/release/PrismVST3_artefacts/Release/VST3/PRISM.vst3 build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app
+# exit 0，三产物均通过
+```
+
+AU `Info.plist`：`AudioComponents.0.type=aufx`、`subtype=Prsm`、`manufacturer=Stgz`、`version=256`（0.1.0 的十六进制）；`CFBundleIdentifier=com.stargazer.prism`、`CFBundleShortVersionString=0.1.0`。
+
+### 3. 代码约束
+
+```sh
+grep -rnE '\b(new|delete|malloc|free)\b' src tests | grep -v 'ScopedNoDenormals' | head
+```
+
+只命中 3 条注释，无调用：
+
+- `src/PluginEditor.h:14`
+- `src/Parameters.h:46`
+- `src/PluginProcessor.cpp:96`
+
+- 分配只在构造/`prepare`/`rebuild`：`src/dsp/Filterbank.cpp:46-58,98-119`、`src/dsp/PrismDsp.cpp:62-70`。
+- `PrismDsp::processBlock`（`src/dsp/PrismDsp.cpp:134-241`）、`Filterbank::process`（`src/dsp/Filterbank.cpp:186-233`）、`OptoBand::processSample`（`src/dsp/OptoBand.cpp:54-75`）无分配、无锁、无 I/O。`grep` 锁/IO 模式在 `src/` 无命中。
+- `jassert` 共 14 处；两处 `jassertfalse` 均有 release 保护：`src/dsp/PrismDsp.cpp:141-143`（块长越界 return）、`src/dsp/Filterbank.cpp:201-203`（段缓冲不足 return）。其余 `jassert` 在 release 编译为空，仅诊断用。
+- 限制：未做运行时分配器 hook，结论来自静态审查与实时代码路径阅读，不是运行时证明。
+
+### 4. 文档回归
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| README 测试条数 26 | PASS | `README.md:10`、`README.md:103`；`c780285` 修正 |
+| README auval 表述 | PASS（按队长指定措辞） | `README.md:11` 写“t1 透传版本通过、当前版本待复验”；但 t1 记录称当时未安装/未运行 auval，历史“通过”无法由本会话独立证实，见文末残留项 |
+| README 释放描述 | PASS | `README.md:115` 写检测器 60 ms + 光敏电阻一阶跟随、90% 恢复 114.0–232.5 ms |
+| README 参数/频段表 | PASS | `README.md:74-78` 对 `src/Parameters.h:36-42`；`README.md:84-90` 对 `src/dsp/BandTable.h:46-54` 与 `src/dsp/FirDesign.h:13` |
+| spec §5.4 释放字段 | PASS | `spec:182` 明确 `releaseFastMs`/`releaseTailMs` 未被读取，留 M4 |
+| spec §7 界面 | PASS | `spec:233-239` 与实现一致：PRISM 文字、5% 静音辉光、en dash + Hz、SPECTRUM 百分号/正号、720×480 不可缩放 |
+| spec §8.1 构建命令 | PASS | `spec:254` 用 `cmake --preset debug` / `--preset release` |
+| spec §8.3 拷贝选项 | PASS | `spec:304` 改为 `PRISM_COPY_PLUGINS` 控制、默认 OFF |
+| spec §9.1 释放口径 | PASS | `spec:361` 写 90% 恢复 114.0–232.5 ms，20%–80% 拟合 <1 dB，快/尾段留 M4 |
+| plan Task 3 灵敏度 | PASS | `plan:209` 为 −18.14…−10.67 |
+| plan Task 3 系数 | PASS | `plan:215` 为 `1 − exp(-1/(tau·fs))` |
+| plan Task 3 释放验收 | PASS | `plan:195` 为 90–300 ms、20%–80% 拟合 <1 dB |
+
+### 5. 未执行项
+
+1. **auval**：需安装 AU 到 `~/Library/Audio/Plug-Ins/Components/`，本会话不能写该目录，等用户批准。命令 `auval -v aufx Prsm Stgz`，预期 `AU VALIDATION SUCCEEDED`。
+2. **pluginval**：本机未安装，未执行。
+3. Standalone 启动/设备出声、Logic/Reaper 加载与延迟补偿、听感：需 GUI/宿主/人耳，未执行。
+
+### 6. t14 验收
+
+| # | 条款 | 结果 | 证据 |
+|---|---|---|---|
+| 1 | debug/release 全量构建 exit 0，`src/`、`tests/` 0 warning | PASS | 各 146 目标；14 条 warning 全在 JUCE/vcpkg 头文件 |
+| 2 | 两套 PrismTests 各 26 条、0 失败，关键数字齐全 | PASS | 各 26 条、exit 0；数字见 §1 |
+| 3 | 三产物 arm64 thin、codesign 全过、AU plist 正确 | PASS | §2 |
+| 4 | 无裸分配；processBlock 无分配/锁/IO；jassert 有 release 保护 | PASS | §3；限制：无运行时 hook |
+| 5 | README/spec/plan 回归检查全部到位 | PASS | §4；auval 历史声明保留 1 条残留 |
+| 6 | 记录追加并提交，工作区干净；列出未执行项 | PASS | 本段与一次文档提交；未执行项见 §5 |
+
+**结论**：t14 六条验收全部 PASS。代码、测试、签名与文档回归均与当前 HEAD 一致。
+
+残留项：
+
+1. `README.md:11` 的“t1 透传版本通过 auval”与本记录中 t1 的“auval 未运行”陈述冲突。若 t1 当时确实未跑 auval，需改成“未验证”或由队长补一次 auval 后再保留。
+2. 未做运行时分配器 hook；音频线程无分配仍是静态审查结论。
+3. auval、pluginval、Standalone/宿主/听感未做。
