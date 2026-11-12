@@ -1,7 +1,5 @@
 name: CI
 
-# CI 只覆盖 macOS x64 与 Windows x64；macOS arm64 由本机 cmake --preset 构建验证
-# （GitHub 免费额度不含 arm64 macOS runner）。
 on:
   push:
   pull_request:
@@ -18,9 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS x64
-            os: macos-13
-            triplet: x64-osx
+          - name: macOS arm64
+            os: macos-14
+            triplet: arm64-osx
             generator: Ninja
             generator_args: ""
             build_command: cmake --build build/ci --parallel

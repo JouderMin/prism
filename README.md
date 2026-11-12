@@ -88,8 +88,6 @@ cmake --build --preset debug --target PrismTests
 
 测试会刷新 `build/debug/editor-snapshot.png`，可开图核对界面。提交前要求 debug 与 release 各构建一次、测试全过、`src/` 与 `tests/` 无新警告。
 
-CI 覆盖 macOS x64 与 Windows x64；macOS arm64 由本机 `cmake --preset` 构建验证。
-
 ### 安装验证
 
 ```sh
