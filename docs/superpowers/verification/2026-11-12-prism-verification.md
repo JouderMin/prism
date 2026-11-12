@@ -664,3 +664,15 @@ grep -rnE '\b(new|delete|malloc|free)\b' src tests | grep -v 'ScopedNoDenormals'
 2. Standalone 启动、宿主加载与听感未做。
 3. 未做运行时分配器 hook。
 4. 压缩实测 `−5.46 dB`，不是 t14 的 `−6.38 dB`；原因是 1 kHz 落段 3。
+
+## t17 之后的队长复跑（2026-11-12 22:15，HEAD 89a504e）
+
+t17 裁决后，队长用当前 release 构建重做了外部验证，补上 t17 残留项 1：
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| AU 安装 | PASS | `ditto build/release/PrismAU_artefacts/Release/AU/PRISM.component` → `~/Library/Audio/Plug-Ins/Components/PRISM.component`，`codesign --verify --deep --strict` 通过 |
+| `auval -v aufx Prsm Stgz` | PASS | 末行 `AU VALIDATION SUCCEEDED.`；覆盖 11.025/44.1/48/96/192 kHz 渲染与参数测试 |
+| pluginval VST3 严格度 10 | PASS | `build/release/PrismVST3_artefacts/Release/VST3/PRISM.vst3` → `SUCCESS`（含 Fuzz parameters） |
+
+仍未做：pluginval 的 AU 模式（1.0.4 在 macOS 27 上扫不到任何 AU，见 t15 段）、Standalone 启动、宿主加载、听感。
