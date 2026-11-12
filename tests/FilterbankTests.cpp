@@ -76,6 +76,30 @@ void fillSine (juce::AudioBuffer<float>& buffer, double frequency, double sample
                                                                         * frequency * static_cast<double> (i) / sampleRate)));
 }
 
+/** 独立单频幅度测量：Hann 窗 + 正交投影（Goertzel 形式），不读 Filterbank 内部状态。 */
+double measureToneAmplitude (const float* samples, int numSamples, double sampleRate, double frequency)
+{
+    constexpr double twoPi = juce::MathConstants<double>::twoPi;
+    const auto phaseStep = twoPi * frequency / sampleRate;
+
+    double re = 0.0;
+    double im = 0.0;
+    double windowSum = 0.0;
+
+    for (int n = 0; n < numSamples; ++n)
+    {
+        const auto window = 0.5 - 0.5 * std::cos (twoPi * static_cast<double> (n)
+                                                   / static_cast<double> (numSamples - 1));
+        const auto sample = static_cast<double> (samples[n]);
+
+        re += window * sample * std::cos (phaseStep * n);
+        im += window * sample * std::sin (phaseStep * n);
+        windowSum += window;
+    }
+
+    return 2.0 * std::sqrt (re * re + im * im) / windowSum;
+}
+
 /** 在测试内按 Filterbank::rebuild 的同一公式重建第 band 段的 2049 抽头系数。 */
 std::vector<float> bandCoefficients (int band, double sampleRate, int taps)
 {
@@ -168,6 +192,7 @@ public:
         testIsolation();
         testCrossoverEdge();
         testLatency();
+        testSingleBandGainOutOfBand();
         testSampleRateChange();
     }
 
@@ -440,6 +465,78 @@ private:
 
         expectEquals (peakIndex, 1152);
         expectWithinAbsoluteError (peakValue, 1.0f, 1.0e-3f);
+    }
+
+
+    void testSingleBandGainOutOfBand()
+    {
+        beginTest ("single-band -6 dB: out-of-band deviation below 0.5 dB (spec 9.1)");
+
+        // 判据：只把段 k 的输出乘 0.5（−6 dB），其余段保持 1。7 段求和本应重建输入，
+        // 因此 y_k = 输入（延迟对齐）+ (0.5 − 1)·段 k。若段 k 的增益变化外溢到相邻段，
+        // 它通带外一个倍频程处会出现可测幅度偏差。spec 9.1 的验算值为 0.00 dB；
+        // 这里容差取 0.5 dB，覆盖 2049 抽头过渡带泄漏（段 2 在 40 Hz 泄漏 −32.8 dB，
+        // 理论偏差约 0.1 dB）。段 1 下侧与段 7 上侧没有“通带外一个倍频程”，跳过。
+        constexpr double sampleRate = 48000.0;
+        constexpr int numSamples = 16384;
+        constexpr int taps = 2049;
+        constexpr int measureStart = 4096;    // 跳过 1152 延迟 + 2049 抽头建立时间。
+        constexpr int measureLength = 8192;
+        constexpr float scaledGain = 0.5f;    // −6 dB
+
+        struct Probe { int band; double lowerHz; double upperHz; };
+
+        const Probe probes[] = {
+            { 0, 0.0,    160.0 },   // 段 1（20–80）：只有上侧 160 Hz。
+            { 1, 40.0,   400.0 },   // 段 2（80–200）。
+            { 2, 100.0,  1000.0 },  // 段 3（200–500）。
+            { 3, 250.0,  2400.0 },  // 段 4（500–1200）。
+            { 4, 600.0,  6000.0 },  // 段 5（1200–3000）。
+            { 5, 1500.0, 16000.0 }, // 段 6（3000–8000）。
+            { 6, 4000.0, 0.0 },     // 段 7（8k+）：只有下侧 4 kHz。
+        };
+
+        prism::Filterbank filterbank (taps);
+
+        for (const auto& probe : probes)
+        {
+            const double frequencies[] = { probe.lowerHz, probe.upperHz };
+
+            for (const auto frequency : frequencies)
+            {
+                if (frequency <= 0.0)
+                    continue;   // 段 1 下侧 / 段 7 上侧无带外倍频程，跳过。
+
+                filterbank.prepare (sampleRate);
+
+                juce::AudioBuffer<float> input (1, numSamples);
+                fillSine (input, frequency, sampleRate, 0.5f);
+
+                std::array<juce::AudioBuffer<float>, kNumBands> bands;
+                makeBands (bands, 1, numSamples);
+                processInBlocks (filterbank, input, bands);
+
+                juce::AudioBuffer<float> scaled (1, numSamples);
+                scaled.clear();
+
+                for (int b = 0; b < kNumBands; ++b)
+                    scaled.addFrom (0, 0, bands[static_cast<size_t> (b)], 0, 0, numSamples,
+                                    b == probe.band ? scaledGain : 1.0f);
+
+                const auto inputAmplitude = measureToneAmplitude (input.getReadPointer (0) + measureStart,
+                                                                  measureLength, sampleRate, frequency);
+                const auto outputAmplitude = measureToneAmplitude (scaled.getReadPointer (0) + measureStart,
+                                                                   measureLength, sampleRate, frequency);
+
+                const auto deviationDb = 20.0 * std::log10 (outputAmplitude / inputAmplitude);
+
+                logMessage ("band " + juce::String (probe.band + 1) + " @ "
+                            + juce::String (frequency, 1) + " Hz: deviation "
+                            + juce::String (deviationDb, 3) + " dB");
+
+                expectLessThan (std::abs (deviationDb), 0.5);
+            }
+        }
     }
 
     void testSampleRateChange()
