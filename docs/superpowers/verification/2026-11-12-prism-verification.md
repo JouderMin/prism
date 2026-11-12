@@ -451,3 +451,22 @@ grep -rnE '\b(new|delete|malloc|free)\b' src tests | grep -v 'ScopedNoDenormals'
 1. `README.md:11` 的“t1 透传版本通过 auval”与本记录中 t1 的“auval 未运行”陈述冲突。若 t1 当时确实未跑 auval，需改成“未验证”或由队长补一次 auval 后再保留。
 2. 未做运行时分配器 hook；音频线程无分配仍是静态审查结论。
 3. auval、pluginval、Standalone/宿主/听感未做。
+
+---
+
+## t15 外部验证（队长执行，2026-11-12 21:41–21:45）
+
+用户批准后由队长在真实宿主环境执行，verifier 未参与。
+
+| # | 项 | 命令 | 结果 |
+|---|---|---|---|
+| 1 | AU 安装 | `cp -R build/release/PrismAU_artefacts/Release/AU/PRISM.component ~/Library/Audio/Plug-Ins/Components/` + `killall -9 AudioComponentRegistrar` | 安装成功，二进制 3667056 字节 |
+| 2 | AU 验证 | `auval -v aufx Prsm Stgz` | `AU VALIDATION SUCCEEDED`（含参数设置、MIDI、44100 渲染、Bad Max Frames 用例） |
+| 3 | VST3 验证（严格度 8） | `pluginval --strictness-level 8 --validate-in-process --validate build/release/.../PRISM.vst3` | `SUCCESS` |
+| 4 | VST3 验证（严格度 10） | 同上，`--strictness-level 10` | `SUCCESS` |
+
+未通过但属工具限制的一项：
+
+- `pluginval 1.0.4` 的 AU 模式在本机返回 `Num plugins found: 0`（`PRISM.component`，以及第三方 `TBTECH Kirchhoff-EQ.component` 均如此）。结论：macOS 27 上该版本 pluginval 的 AU 扫描不可用，不能作为 AU 失败证据；AU 结论以 auval 为准。
+
+仍待人工确认：Standalone 启动并出声、Logic/Reaper 加载与延迟补偿、听感。
