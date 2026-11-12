@@ -32,9 +32,14 @@ if(NOT JUCE_FOUND)
 endif()
 
 # ---- 共用源码 -------------------------------------------------------------
+# DSP 源码用 GLOB + CONFIGURE_DEPENDS，后续任务新增文件无需改本文件。
+file(GLOB PRISM_DSP_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/*.cpp")
+
 set(PRISM_SOURCES
     src/PluginProcessor.cpp
-    src/PluginEditor.cpp)
+    src/PluginEditor.cpp
+    ${PRISM_DSP_SOURCES})
 
 # 三个目标共用的 juce_add_plugin 参数；只有 FORMATS、签名方式与麦克风权限不同。
 # $1 = 目标名（共享代码库），$2 = 格式（AU/VST3/Standalone），
@@ -71,6 +76,7 @@ function(prism_add_plugin target kind sign_mode)
     target_link_libraries(${target} PRIVATE
         juce::juce_audio_utils
         juce::juce_audio_processors
+        juce::juce_dsp
         juce::juce_gui_basics
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags)
@@ -101,3 +107,11 @@ prism_add_plugin(PrismVST3 VST3 plain FORMATS VST3)
 prism_add_plugin(PrismStandalone Standalone plain
     FORMATS Standalone
     MICROPHONE_PERMISSION_ENABLED TRUE)
+
+# ---- 单元测试 -------------------------------------------------------------
+option(PRISM_BUILD_TESTS "构建 PrismTests 控制台测试" ON)
+
+if(PRISM_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
