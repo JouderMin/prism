@@ -3,12 +3,15 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 // PRISM 七段光电压缩器。
-// M1 只做透传骨架：音频原样通过，延迟 0，用于验证三格式构建链路。
+// 当前阶段：5 个参数、状态存取与立体声专一总线已接上；音频仍透传。
 class PrismAudioProcessor final : public juce::AudioProcessor
 {
 public:
     PrismAudioProcessor();
     ~PrismAudioProcessor() override = default;
+
+    // 5 个参数的定义在 Parameters.h；这里只做转发，便于测试与后续接线。
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     // ---- AudioProcessor ---------------------------------------------------
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -37,6 +40,9 @@ public:
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
+
+    // 公开给测试与处理器内部使用；生命周期与 processor 相同。
+    juce::AudioProcessorValueTreeState apvts;
 
 private:
     double currentSampleRate = 0.0;

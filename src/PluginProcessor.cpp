@@ -1,15 +1,25 @@
 #include "PluginProcessor.h"
 
+#include "Parameters.h"
 #include "PluginEditor.h"
 
 #include <memory>
 
+juce::AudioProcessorValueTreeState::ParameterLayout PrismAudioProcessor::createParameterLayout()
+{
+    return prism::createLayout();
+}
+
 PrismAudioProcessor::PrismAudioProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
-                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, juce::Identifier ("PRISM"), createParameterLayout())
 {
-    // M1 透传：不引入延迟。DSP 任务会改为 1152。
+    // 状态格式版本；将来改布局时靠它做迁移。
+    apvts.state.setProperty (juce::Identifier ("version"), 1, nullptr);
+
+    // 当前仍透传，DSP 接线后改为 prism::PrismDsp::kLatencySamples。
     setLatencySamples (0);
 }
 
@@ -57,14 +67,22 @@ juce::AudioProcessorEditor* PrismAudioProcessor::createEditor()
     return std::make_unique<PrismAudioProcessorEditor> (*this).release();
 }
 
-void PrismAudioProcessor::getStateInformation (juce::MemoryBlock&)
+void PrismAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // M1 无状态可存。
+    const auto state = apvts.copyState();
+
+    if (const auto xml = state.createXml())
+        copyXmlToBinary (*xml, destData);
 }
 
-void PrismAudioProcessor::setStateInformation (const void*, int)
+void PrismAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    // M1 无状态可恢复。
+    const std::unique_ptr<juce::XmlElement> xml (getXmlFromBinary (data, sizeInBytes));
+
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return;
+
+    apvts.replaceState (juce::ValueTree::fromXml (*xml));
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

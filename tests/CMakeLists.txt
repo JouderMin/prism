@@ -6,9 +6,13 @@ file(GLOB PRISM_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cp
 juce_add_console_app(PrismTests
     PRODUCT_NAME "PrismTests")
 
+# 处理器与编辑器也编进测试目标：ParamTests 要直接构造 PrismAudioProcessor
+# 验证参数表、状态往返与总线布局。
 target_sources(PrismTests PRIVATE
     ${PRISM_TEST_SOURCES}
-    ${PRISM_DSP_SOURCES})
+    ${PRISM_DSP_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/PluginProcessor.cpp
+    ${CMAKE_SOURCE_DIR}/src/PluginEditor.cpp)
 
 target_include_directories(PrismTests PRIVATE
     "${CMAKE_SOURCE_DIR}/src")
@@ -24,6 +28,9 @@ target_compile_options(PrismTests PRIVATE
 
 target_link_libraries(PrismTests PRIVATE
     juce::juce_dsp
+    juce::juce_audio_utils
+    juce::juce_audio_processors
+    juce::juce_gui_basics
     juce::juce_audio_basics
     juce::juce_recommended_config_flags)
 
