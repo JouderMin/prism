@@ -8,7 +8,7 @@ JUCE 8.0.7 + CMake + C++20。品牌 Stargazer。
 
 - 三个目标可构建：AU、VST3、Standalone。
 - 26 条自动化测试通过。
-- 当前版本的 auval 未验证。t1 的透传版本曾由本机手动安装后跑过一次 `auval -v aufx Prsm Stgz`，结果记在团队任务 t1 的备注里，仓库内无日志。
+- 当前版本通过 `auval -v aufx Prsm Stgz`（AU VALIDATION SUCCEEDED），VST3 通过 pluginval 1.0.4 严格度 10。
 - 界面为 MVP：7 根光柱加 5 个旋钮。
 - 未做：双时间常数释放、预设、A/B、侧链。
 
@@ -112,5 +112,6 @@ tests/                  26 条单元测试与快照
 ## 已知限制
 
 - 只支持 arm64 macOS，只支持立体声输入输出。
+- pluginval 1.0.4 的 AU 模式在本机返回 0 个插件（第三方 AU 同样如此），AU 只能用 auval 验。
 - 释放由检测器 60 ms 与光敏电阻一阶跟随叠加（段 1 为 80 ms，段 7 为 10 ms）。−6 → −18 dBFS 的 90% 恢复为 114.0–232.5 ms。双时间常数释放留到 M4。
 - 界面没有电平刻度与增益衰减读数。
