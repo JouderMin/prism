@@ -187,21 +187,14 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
                                      ? 20.0f * std::log10 (amount) + kMaxAmountDriveDb
                                      : -kDriveClampDb;
 
-        float wetLeft = 0.0f;
-        float wetRight = 0.0f;
-
-        for (int b = 0; b < kNumBands; ++b)
+        // 每段检测、光电、auto-gain；返回该段总增益。
+        const auto bandGain = [&] (int b, float left, float right) noexcept
         {
             const auto tilt = spectrum * kSpectrumTiltDb
                               * (static_cast<float> (b) - 3.0f) / 3.0f;
 
             optos_[static_cast<size_t> (b)].setDrive (
                 juce::jlimit (-kDriveClampDb, kDriveClampDb, baseDriveDb + tilt));
-
-            const auto left = bands_[static_cast<size_t> (b)].getReadPointer (0)[i];
-            const auto right = numChannels > 1
-                                   ? bands_[static_cast<size_t> (b)].getReadPointer (1)[i]
-                                   : left;
 
             // 检测取左右较大值，两侧共用同一条增益曲线。
             const auto detector = juce::jmax (std::abs (left), std::abs (right));
@@ -225,24 +218,52 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
             if (compensationDb < kAutoGainDeadbandDb)
                 compensationDb = 0.0f;
 
-            const auto totalGain = optoGain * decibelsToGain (compensationDb);
-
-            wetLeft += left * totalGain;
-            wetRight += right * totalGain;
-        }
+            return optoGain * decibelsToGain (compensationDb);
+        };
 
         // 干声延时线：与分频器同样的 1152 样本延迟，保证 MIX 相位对齐。
+        // 先读后写，读到的就是 1152 样本前的输入增益信号。
         const auto dryLeft = dryDelay_[0][static_cast<size_t> (dryWrite_)];
-        dryDelay_[0][static_cast<size_t> (dryWrite_)] = inputGainBuffer_.getReadPointer (0)[i];
-
         auto dryRight = dryLeft;
 
         if (numChannels > 1)
-        {
             dryRight = dryDelay_[1][static_cast<size_t> (dryWrite_)];
+
+        float bandSumLeft = 0.0f;
+        float bandSumRight = 0.0f;
+        float wetLeft = 0.0f;
+        float wetRight = 0.0f;
+
+        for (int b = 0; b < Filterbank::kNumOutputBands; ++b)
+        {
+            const auto left = bands_[static_cast<size_t> (b)].getReadPointer (0)[i];
+            const auto right = numChannels > 1
+                                   ? bands_[static_cast<size_t> (b)].getReadPointer (1)[i]
+                                   : left;
+
+            const auto gain = bandGain (b, left, right);
+
+            bandSumLeft += left;
+            bandSumRight += right;
+            wetLeft += left * gain;
+            wetRight += right * gain;
+        }
+
+        // 段 7 = x_delayed − Σ_{0..5} band。恒等式：
+        // Σ g_b·band_b = g_6·x_delayed + Σ_{0..5} (g_b − g_6)·band_b。
+        const auto band7Left = dryLeft - bandSumLeft;
+        const auto band7Right = numChannels > 1 ? dryRight - bandSumRight : band7Left;
+
+        const auto band7Gain = bandGain (Filterbank::kNumOutputBands, band7Left, band7Right);
+
+        wetLeft += band7Left * band7Gain;
+        wetRight += band7Right * band7Gain;
+
+        dryDelay_[0][static_cast<size_t> (dryWrite_)] = inputGainBuffer_.getReadPointer (0)[i];
+
+        if (numChannels > 1)
             dryDelay_[1][static_cast<size_t> (dryWrite_)]
                 = inputGainBuffer_.getReadPointer (1)[i];
-        }
 
         dryWrite_ = (dryWrite_ + 1) % kDryDelaySamples;
 

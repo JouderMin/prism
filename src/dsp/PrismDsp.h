@@ -43,8 +43,8 @@ struct EngineParams
 
 /** 7 段光电压缩器引擎。
 
-    数据流：输入增益 → Filterbank 分频 → 每段光电链路 → 每段 auto-gain
-    → 求和 → 干湿混合 → 输出增益。
+    数据流：输入增益 → Filterbank 分频（6 段）→ 第 7 段按恒等式重建
+    → 每段光电链路 → 每段 auto-gain → 求和 → 干湿混合 → 输出增益。
 
     延迟只来自 Filterbank（taps/2 + 128 = 1152 样本）。干声支路用同样长度的
     延时线对齐，引擎本身不额外增加缓冲延迟。
@@ -127,7 +127,7 @@ private:
         OptoBand (4), OptoBand (5), OptoBand (6)
     };
 
-    std::array<juce::AudioBuffer<float>, kNumBands> bands_;
+    std::array<juce::AudioBuffer<float>, Filterbank::kNumOutputBands> bands_;
     juce::AudioBuffer<float> inputGainBuffer_;
     std::array<std::vector<float>, 2> dryDelay_;
     int dryWrite_ = 0;

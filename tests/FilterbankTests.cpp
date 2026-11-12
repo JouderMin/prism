@@ -32,9 +32,10 @@ namespace
 {
 
 constexpr int kNumBands = prism::kNumBands;
+constexpr int kNumOutputBands = prism::Filterbank::kNumOutputBands;
 constexpr int kBlock = prism::Filterbank::kBlockSize;
 
-void makeBands (std::array<juce::AudioBuffer<float>, kNumBands>& bands,
+void makeBands (std::array<juce::AudioBuffer<float>, kNumOutputBands>& bands,
                 int numChannels, int numSamples)
 {
     for (auto& band : bands)
@@ -43,7 +44,7 @@ void makeBands (std::array<juce::AudioBuffer<float>, kNumBands>& bands,
 
 void processInBlocks (prism::Filterbank& filterbank,
                       juce::AudioBuffer<float>& input,
-                      std::array<juce::AudioBuffer<float>, kNumBands>& bands)
+                      std::array<juce::AudioBuffer<float>, kNumOutputBands>& bands)
 {
     const auto numChannels = input.getNumChannels();
     const auto numSamples = input.getNumSamples();
@@ -55,14 +56,37 @@ void processInBlocks (prism::Filterbank& filterbank,
         juce::AudioBuffer<float> inputView;
         inputView.setDataToReferTo (input.getArrayOfWritePointers(), numChannels, offset, len);
 
-        std::array<juce::AudioBuffer<float>, kNumBands> bandViews;
+        std::array<juce::AudioBuffer<float>, kNumOutputBands> bandViews;
 
-        for (int b = 0; b < kNumBands; ++b)
+        for (int b = 0; b < kNumOutputBands; ++b)
             bandViews[static_cast<size_t> (b)].setDataToReferTo (
                 bands[static_cast<size_t> (b)].getArrayOfWritePointers(),
                 numChannels, offset, len);
 
         filterbank.processBlock (inputView, bandViews);
+    }
+}
+
+/** 按恒等式重建段 7：延迟输入 − 前 6 段之和。延迟前输入按 0 处理。 */
+void reconstructBand7 (const juce::AudioBuffer<float>& input,
+                       const std::array<juce::AudioBuffer<float>, kNumOutputBands>& bands,
+                       int latency,
+                       juce::AudioBuffer<float>& band7)
+{
+    band7.setSize (input.getNumChannels(), input.getNumSamples(), false, false, true);
+
+    for (int ch = 0; ch < input.getNumChannels(); ++ch)
+    {
+        for (int i = 0; i < input.getNumSamples(); ++i)
+        {
+            auto sum = 0.0f;
+
+            for (int b = 0; b < kNumOutputBands; ++b)
+                sum += bands[static_cast<size_t> (b)].getSample (ch, i);
+
+            const auto delayed = i >= latency ? input.getSample (ch, i - latency) : 0.0f;
+            band7.setSample (ch, i, delayed - sum);
+        }
     }
 }
 
@@ -196,6 +220,22 @@ void convolveWithCoefficients (const juce::AudioBuffer<float>& input,
     }
 }
 
+/** Filterbank 输出比线性卷积晚一个 hop；返回逐样本最大误差。 */
+float convolutionError (const juce::AudioBuffer<float>& output,
+                        const juce::AudioBuffer<float>& convolution,
+                        int hopDelay)
+{
+    auto maxError = 0.0f;
+
+    for (int ch = 0; ch < output.getNumChannels(); ++ch)
+        for (int i = hopDelay; i < output.getNumSamples(); ++i)
+            maxError = juce::jmax (maxError,
+                                   std::abs (output.getSample (ch, i)
+                                             - convolution.getSample (ch, i - hopDelay)));
+
+    return maxError;
+}
+
 } // namespace
 
 class FilterbankTests final : public juce::UnitTest
@@ -206,6 +246,7 @@ public:
     void runTest() override
     {
         testReconstructionAndDesign();
+        testSilence();
         testSingleBandReconstruction();
         testIsolation();
         testCrossoverEdge();
@@ -218,7 +259,7 @@ public:
 private:
     void testReconstructionAndDesign()
     {
-        beginTest ("reconstruction: 7 bands sum to input after latency");
+        beginTest ("reconstruction: 6 bands + rebuilt band 7 sum to input after latency");
 
         constexpr double sampleRate = 48000.0;
         constexpr int numSamples = 8192;
@@ -236,7 +277,7 @@ private:
             for (int i = 0; i < numSamples; ++i)
                 input.setSample (ch, i, (random.nextFloat() * 2.0f - 1.0f) * 0.5f);
 
-        std::array<juce::AudioBuffer<float>, kNumBands> bands;
+        std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
         makeBands (bands, 2, numSamples);
         processInBlocks (filterbank, input, bands);
 
@@ -249,11 +290,12 @@ private:
             {
                 auto sum = 0.0f;
 
-                for (int b = 0; b < kNumBands; ++b)
+                for (int b = 0; b < kNumOutputBands; ++b)
                     sum += bands[static_cast<size_t> (b)].getSample (ch, i);
 
-                maxError = juce::jmax (maxError,
-                                       std::abs (sum - input.getSample (ch, i - latency)));
+                const auto delayed = input.getSample (ch, i - latency);
+                const auto band7 = delayed - sum;
+                maxError = juce::jmax (maxError, std::abs ((sum + band7) - delayed));
             }
         }
 
@@ -280,6 +322,42 @@ private:
         expectLessThan (maxAsymmetry, 1.0e-7f);
     }
 
+    void testSilence()
+    {
+        beginTest ("silence: six output bands and rebuilt band 7 are exactly zero");
+
+        constexpr double sampleRate = 48000.0;
+        constexpr int numSamples = 4096;
+
+        prism::Filterbank filterbank (2049);
+        filterbank.prepare (sampleRate);
+
+        juce::AudioBuffer<float> input (2, numSamples);
+        input.clear();
+
+        std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
+        makeBands (bands, 2, numSamples);
+        processInBlocks (filterbank, input, bands);
+
+        juce::AudioBuffer<float> reconstructedBand7;
+        reconstructBand7 (input, bands, filterbank.latencySamples(), reconstructedBand7);
+
+        auto allZero = true;
+
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                for (int b = 0; b < kNumOutputBands; ++b)
+                    allZero = allZero && bands[static_cast<size_t> (b)].getSample (ch, i) == 0.0f;
+
+                allZero = allZero && reconstructedBand7.getSample (ch, i) == 0.0f;
+            }
+        }
+
+        expect (allZero);
+    }
+
     void testSingleBandReconstruction()
     {
         beginTest ("single-band reconstruction: each band matches independent FIR convolution");
@@ -300,30 +378,43 @@ private:
             for (int i = 0; i < numSamples; ++i)
                 input.setSample (ch, i, (random.nextFloat() * 2.0f - 1.0f) * 0.5f);
 
-        std::array<juce::AudioBuffer<float>, kNumBands> bands;
+        std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
         makeBands (bands, 2, numSamples);
         processInBlocks (filterbank, input, bands);
+
+        juce::AudioBuffer<float> reconstructedBand7;
+        reconstructBand7 (input, bands, filterbank.latencySamples(), reconstructedBand7);
 
         for (int band = 0; band < kNumBands; ++band)
         {
             const auto coefficients = bandCoefficients (band, sampleRate, taps);
 
-            // 重建一：只保留该段、其余段置零后求和。恒等成立说明 7 段缓冲区
+            // 重建一：只保留该段、其余段置零后求和。恒等成立说明 6 段缓冲区
             // 没有互相别名、没有共享写入；任何跨段污染都会在这里出现。
             juce::AudioBuffer<float> isolated (2, numSamples);
             isolated.clear();
-            isolated.addFrom (0, 0, bands[static_cast<size_t> (band)], 0, 0, numSamples, 1.0f);
-            isolated.addFrom (1, 0, bands[static_cast<size_t> (band)], 1, 0, numSamples, 1.0f);
 
-            auto isolationError = 0.0f;
+            if (band < kNumOutputBands)
+            {
+                isolated.addFrom (0, 0, bands[static_cast<size_t> (band)], 0, 0, numSamples, 1.0f);
+                isolated.addFrom (1, 0, bands[static_cast<size_t> (band)], 1, 0, numSamples, 1.0f);
 
-            for (int ch = 0; ch < 2; ++ch)
-                for (int i = 0; i < numSamples; ++i)
-                    isolationError = juce::jmax (isolationError,
-                                                 std::abs (isolated.getSample (ch, i)
-                                                           - bands[static_cast<size_t> (band)].getSample (ch, i)));
+                auto isolationError = 0.0f;
 
-            expectEquals (isolationError, 0.0f);
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int i = 0; i < numSamples; ++i)
+                        isolationError = juce::jmax (isolationError,
+                                                     std::abs (isolated.getSample (ch, i)
+                                                               - bands[static_cast<size_t> (band)].getSample (ch, i)));
+
+                expectEquals (isolationError, 0.0f);
+            }
+            else
+            {
+                // 段 7 不再由 Filterbank 输出，按恒等式重建后再做同一项比对。
+                for (int ch = 0; ch < 2; ++ch)
+                    isolated.copyFrom (ch, 0, reconstructedBand7, ch, 0, numSamples);
+            }
 
             // 重建二：用公开的 designLowpass 在测试内独立重建该段系数，做 16384 点
             // 线性 FFT 卷积，再与 Filterbank 第 i 段输出逐样本比对。这是硬判据：
@@ -332,13 +423,10 @@ private:
             juce::AudioBuffer<float> convolution (2, numSamples);
             convolveWithCoefficients (input, coefficients, convolution);
 
-            auto maxError = 0.0f;
-
-            for (int ch = 0; ch < 2; ++ch)
-                for (int i = hopDelay; i < numSamples; ++i)
-                    maxError = juce::jmax (maxError,
-                                           std::abs (bands[static_cast<size_t> (band)].getSample (ch, i)
-                                                     - convolution.getSample (ch, i - hopDelay)));
+            const auto maxError = band < kNumOutputBands
+                                      ? convolutionError (bands[static_cast<size_t> (band)],
+                                                          convolution, hopDelay)
+                                      : convolutionError (reconstructedBand7, convolution, hopDelay);
 
             logMessage ("band " + juce::String (band + 1) + " independent convolution error: "
                         + juce::String (maxError, 9));
@@ -367,7 +455,7 @@ private:
             juce::AudioBuffer<float> input (1, numSamples);
             fillSine (input, 40.0, sampleRate, amplitude);
 
-            std::array<juce::AudioBuffer<float>, kNumBands> bands;
+            std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
             makeBands (bands, 1, numSamples);
             processInBlocks (filterbank, input, bands);
 
@@ -389,7 +477,7 @@ private:
             juce::AudioBuffer<float> input (1, numSamples);
             fillSine (input, 1000.0, sampleRate, amplitude);
 
-            std::array<juce::AudioBuffer<float>, kNumBands> bands;
+            std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
             makeBands (bands, 1, numSamples);
             processInBlocks (filterbank, input, bands);
 
@@ -398,7 +486,7 @@ private:
 
             auto loudestOther = 0.0f;
 
-            for (int b = 0; b < kNumBands; ++b)
+            for (int b = 0; b < kNumOutputBands; ++b)
                 if (b != 2)
                     loudestOther = juce::jmax (loudestOther, rmsOf (bands[static_cast<size_t> (b)], 0, measureStart, measured));
 
@@ -426,7 +514,7 @@ private:
         juce::AudioBuffer<float> input (1, numSamples);
         fillSine (input, 150.0, sampleRate, 0.5f);
 
-        std::array<juce::AudioBuffer<float>, kNumBands> bands;
+        std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
         makeBands (bands, 1, numSamples);
         processInBlocks (filterbank, input, bands);
 
@@ -459,9 +547,12 @@ private:
         input.clear();
         input.setSample (0, 0, 1.0f);
 
-        std::array<juce::AudioBuffer<float>, kNumBands> bands;
+        std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
         makeBands (bands, 1, numSamples);
         processInBlocks (filterbank, input, bands);
+
+        juce::AudioBuffer<float> reconstructedBand7;
+        reconstructBand7 (input, bands, filterbank.latencySamples(), reconstructedBand7);
 
         auto peakIndex = 0;
         auto peakValue = 0.0f;
@@ -470,8 +561,10 @@ private:
         {
             auto sum = 0.0f;
 
-            for (int b = 0; b < kNumBands; ++b)
+            for (int b = 0; b < kNumOutputBands; ++b)
                 sum += bands[static_cast<size_t> (b)].getSample (0, i);
+
+            sum += reconstructedBand7.getSample (0, i);
 
             if (std::abs (sum) > std::abs (peakValue))
             {
@@ -492,7 +585,8 @@ private:
     {
         beginTest ("single-band -6 dB: out-of-band deviation below 0.5 dB (spec 9.1)");
 
-        // 判据：只把段 k 的输出乘 0.5（−6 dB），其余段保持 1。7 段求和本应重建输入，
+        // 判据：只把段 k 的输出乘 0.5（−6 dB），其余段保持 1。6 段 + 重建段 7
+        // 求和本应重建输入，
         // 因此 y_k = 输入（延迟对齐）+ (0.5 − 1)·段 k。若段 k 的增益变化外溢到相邻段，
         // 它通带外一个倍频程处会出现可测幅度偏差。spec 9.1 的验算值为 0.00 dB；
         // 这里容差取 0.5 dB，覆盖 2049 抽头过渡带泄漏（实测 11 个测点偏差均 ≤ 0.001 dB）。
@@ -532,16 +626,22 @@ private:
                 juce::AudioBuffer<float> input (1, numSamples);
                 fillSine (input, frequency, sampleRate, 0.5f);
 
-                std::array<juce::AudioBuffer<float>, kNumBands> bands;
+                std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
                 makeBands (bands, 1, numSamples);
                 processInBlocks (filterbank, input, bands);
+
+                juce::AudioBuffer<float> reconstructedBand7;
+                reconstructBand7 (input, bands, filterbank.latencySamples(), reconstructedBand7);
 
                 juce::AudioBuffer<float> scaled (1, numSamples);
                 scaled.clear();
 
-                for (int b = 0; b < kNumBands; ++b)
+                for (int b = 0; b < kNumOutputBands; ++b)
                     scaled.addFrom (0, 0, bands[static_cast<size_t> (b)], 0, 0, numSamples,
                                     b == probe.band ? scaledGain : 1.0f);
+
+                scaled.addFrom (0, 0, reconstructedBand7, 0, 0, numSamples,
+                                probe.band == kNumBands - 1 ? scaledGain : 1.0f);
 
                 const auto inputAmplitude = measureToneAmplitude (input.getReadPointer (0) + measureStart,
                                                                   measureLength, sampleRate, frequency);
@@ -551,8 +651,10 @@ private:
                 const auto deviationDb = 20.0 * std::log10 (outputAmplitude / inputAmplitude);
 
                 const auto inputRms = rmsOf (input, 0, measureStart, measureLength);
-                const auto bandRms = rmsOf (bands[static_cast<size_t> (probe.band)], 0,
-                                            measureStart, measureLength);
+                const auto bandRms = probe.band < kNumOutputBands
+                                         ? rmsOf (bands[static_cast<size_t> (probe.band)], 0,
+                                                  measureStart, measureLength)
+                                         : rmsOf (reconstructedBand7, 0, measureStart, measureLength);
                 const auto leakageDb = toDecibels (bandRms / inputRms);
 
                 logMessage ("band " + juce::String (probe.band + 1) + " @ "
@@ -571,7 +673,7 @@ private:
 
         // 14 kHz 超过 11.025 kHz 的 Nyquist。prepare 把每个分频点夹到 min(point, 0.45·fs)，
         // 因此 designLowpass 不会收到 >= fs/2 的截止频率（否则其 jassert 会在 debug 触发）。
-        // 相邻点重合时该段系数为 0，7 段求和仍恒等于输入。
+        // 相邻点重合时该段系数为 0，6 段输出 + 重建段 7 仍恒等于输入。
         constexpr double sampleRate = 11025.0;
         constexpr int numSamples = 8192;
 
@@ -586,19 +688,25 @@ private:
         for (int i = 0; i < numSamples; ++i)
             noise.setSample (0, i, (random.nextFloat() * 2.0f - 1.0f) * 0.5f);
 
-        std::array<juce::AudioBuffer<float>, kNumBands> bands;
+        std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
         makeBands (bands, 1, numSamples);
         processInBlocks (filterbank, noise, bands);
 
         const auto latency = filterbank.latencySamples();
+
+        juce::AudioBuffer<float> reconstructedBand7;
+        reconstructBand7 (noise, bands, latency, reconstructedBand7);
+
         auto maxError = 0.0f;
 
         for (int i = latency; i < numSamples; ++i)
         {
             auto sum = 0.0f;
 
-            for (int b = 0; b < kNumBands; ++b)
+            for (int b = 0; b < kNumOutputBands; ++b)
                 sum += bands[static_cast<size_t> (b)].getSample (0, i);
+
+            sum += reconstructedBand7.getSample (0, i);
 
             maxError = juce::jmax (maxError, std::abs (sum - noise.getSample (0, i - latency)));
         }
@@ -625,19 +733,25 @@ private:
         for (int i = 0; i < numSamples; ++i)
             noise.setSample (0, i, (random.nextFloat() * 2.0f - 1.0f) * 0.5f);
 
-        std::array<juce::AudioBuffer<float>, kNumBands> bands;
+        std::array<juce::AudioBuffer<float>, kNumOutputBands> bands;
         makeBands (bands, 1, numSamples);
         processInBlocks (filterbank, noise, bands);
 
         const auto latency = filterbank.latencySamples();
+
+        juce::AudioBuffer<float> reconstructedBand7;
+        reconstructBand7 (noise, bands, latency, reconstructedBand7);
+
         auto maxError = 0.0f;
 
         for (int i = latency; i < numSamples; ++i)
         {
             auto sum = 0.0f;
 
-            for (int b = 0; b < kNumBands; ++b)
+            for (int b = 0; b < kNumOutputBands; ++b)
                 sum += bands[static_cast<size_t> (b)].getSample (0, i);
+
+            sum += reconstructedBand7.getSample (0, i);
 
             maxError = juce::jmax (maxError, std::abs (sum - noise.getSample (0, i - latency)));
         }
@@ -651,7 +765,7 @@ private:
         juce::AudioBuffer<float> sine (1, numSamples);
         fillSine (sine, 150.0, sampleRate, 0.5f);
 
-        std::array<juce::AudioBuffer<float>, kNumBands> sineBands;
+        std::array<juce::AudioBuffer<float>, kNumOutputBands> sineBands;
         makeBands (sineBands, 1, numSamples);
         processInBlocks (filterbank, sine, sineBands);
 

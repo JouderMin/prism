@@ -90,7 +90,7 @@ double measureFilterbank (const juce::AudioBuffer<float>& source)
     prism::Filterbank filterbank;
     filterbank.prepare (kSampleRate);
 
-    std::array<juce::AudioBuffer<float>, prism::kNumBands> bands;
+    std::array<juce::AudioBuffer<float>, prism::Filterbank::kNumOutputBands> bands;
 
     for (auto& band : bands)
     {

@@ -35,6 +35,10 @@ namespace prism
     求和恒等于输入（延迟对齐后）。
     延迟 = taps/2 + 块长，48 kHz、2049 抽头、块 128 时为 1152 样本。
 
+    processBlock 只输出前 6 段（kNumOutputBands）；第 7 段 = δ − LP_6
+    可由调用方按恒等式从延迟输入减去前 6 段重建，每 hop 因此少做一次
+    掩码乘与反向 FFT。7 段完整求和仍恒等于输入。
+
     processBlock 走 FFT 重叠保留；所有缓冲在构造与 prepare 中分配，
     音频线程不分配、不加锁。
 */
@@ -42,6 +46,7 @@ class Filterbank
 {
 public:
     static constexpr int kNumBands = prism::kNumBands;
+    static constexpr int kNumOutputBands = 6;
     static constexpr int kBlockSize = 128;
     static constexpr int kMaxChannels = 2;
     static constexpr int kRingCapacity = 4 * kBlockSize;
@@ -61,13 +66,13 @@ public:
     int fftSize() const noexcept { return fftSize_; }
     double sampleRate() const noexcept { return sampleRate_; }
 
-    /** 处理一块输入，写入 7 段。
+    /** 处理一块输入，写入前 6 段。
 
         bands 必须已按输入通道数与样本数分配好；本函数不分配内存。
-        输入通道数最多 2。
+        输入通道数最多 2。第 7 段由调用方按恒等式重建。
     */
     void processBlock (const juce::AudioBuffer<float>& input,
-                       std::array<juce::AudioBuffer<float>, kNumBands>& bands);
+                       std::array<juce::AudioBuffer<float>, kNumOutputBands>& bands);
 
 private:
     static int fftSizeFor (int taps) noexcept;
@@ -82,13 +87,13 @@ private:
     std::array<double, kNumCrossovers> crossovers_ {};
     juce::dsp::FFT fft_;
 
-    std::array<std::vector<float>, kNumBands> bandSpectra_;
+    std::array<std::vector<float>, kNumOutputBands> bandSpectra_;
     std::array<std::vector<float>, kMaxChannels> history_;
     std::array<std::vector<float>, kMaxChannels> pending_;
     std::array<int, kMaxChannels> pendingCount_ {};
-    std::array<std::array<std::vector<float>, kNumBands>, kMaxChannels> rings_;
-    std::array<std::array<int, kNumBands>, kMaxChannels> ringRead_ {};
-    std::array<std::array<int, kNumBands>, kMaxChannels> ringWrite_ {};
+    std::array<std::array<std::vector<float>, kNumOutputBands>, kMaxChannels> rings_;
+    std::array<std::array<int, kNumOutputBands>, kMaxChannels> ringRead_ {};
+    std::array<std::array<int, kNumOutputBands>, kMaxChannels> ringWrite_ {};
     std::vector<float> work_;
     std::vector<float> product_;
 };

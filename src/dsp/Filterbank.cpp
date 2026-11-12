@@ -88,7 +88,7 @@ void Filterbank::reset()
                    pending_[static_cast<size_t> (ch)].end(), 0.0f);
         pendingCount_[static_cast<size_t> (ch)] = 0;
 
-        for (int b = 0; b < kNumBands; ++b)
+        for (int b = 0; b < kNumOutputBands; ++b)
         {
             std::fill (rings_[static_cast<size_t> (ch)][static_cast<size_t> (b)].begin(),
                        rings_[static_cast<size_t> (ch)][static_cast<size_t> (b)].end(), 0.0f);
@@ -108,7 +108,7 @@ void Filterbank::prepare (double sampleRate)
 
     // 低采样率保护：分频点不得超过 0.45·fs（低于 Nyquist 留 10% 余量）。
     // 例：11.025 kHz 下 14 kHz 会被夹到 4961.25 Hz；min 保持升序，
-    // 相邻点重合时对应段系数为 0，7 段求和仍恒等于输入。
+    // 相邻点重合时对应段系数为 0，6 段输出 + 重建段 7 仍恒等于输入。
     const auto maxCutoff = 0.45 * sampleRate;
 
     for (int k = 0; k < kNumCrossovers; ++k)
@@ -122,12 +122,12 @@ void Filterbank::rebuild()
 {
     jassert (sampleRate_ > 0.0);
 
-    std::array<std::vector<float>, kNumBands> coefficients;
+    std::array<std::vector<float>, kNumOutputBands> coefficients;
 
     // LP_0 = 0。
     std::vector<float> previous (static_cast<size_t> (taps_), 0.0f);
 
-    for (int k = 0; k < kNumCrossovers; ++k)
+    for (int k = 0; k < kNumOutputBands; ++k)
     {
         const auto lowpass = designLowpass (static_cast<float> (crossovers_[static_cast<size_t> (k)]),
                                             sampleRate_, taps_, kKaiserBeta);
@@ -141,16 +141,11 @@ void Filterbank::rebuild()
         previous = lowpass;
     }
 
-    // LP_7 = δ（中心为 1），段 7 = δ − LP_6。
-    auto& top = coefficients[static_cast<size_t> (kNumBands - 1)];
-    top.assign (static_cast<size_t> (taps_), 0.0f);
-    top[static_cast<size_t> (taps_ / 2)] = 1.0f;
-
-    for (int n = 0; n < taps_; ++n)
-        top[static_cast<size_t> (n)] -= previous[static_cast<size_t> (n)];
+    // 前 6 段的掩码之和为 LP_6；第 7 段（δ − LP_6）不再单独做 IFFT，
+    // 由调用方从延迟输入减去这 6 段重建。
 
     // 预计算每段频谱：零填充到 FFT 长度后做实数前向变换。
-    for (int b = 0; b < kNumBands; ++b)
+    for (int b = 0; b < kNumOutputBands; ++b)
     {
         std::fill (work_.begin(), work_.end(), 0.0f);
         std::copy (coefficients[static_cast<size_t> (b)].begin(),
@@ -178,7 +173,7 @@ void Filterbank::processHop (int channel)
 
     fft_.performRealOnlyForwardTransform (work_.data(), false);
 
-    for (int b = 0; b < kNumBands; ++b)
+    for (int b = 0; b < kNumOutputBands; ++b)
     {
         const auto& spectrum = bandSpectra_[static_cast<size_t> (b)];
 
@@ -211,7 +206,7 @@ void Filterbank::processHop (int channel)
 }
 
 void Filterbank::processBlock (const juce::AudioBuffer<float>& input,
-                               std::array<juce::AudioBuffer<float>, kNumBands>& bands)
+                               std::array<juce::AudioBuffer<float>, kNumOutputBands>& bands)
 {
     const auto numSamples = input.getNumSamples();
     const auto numChannels = juce::jmin (input.getNumChannels(), kMaxChannels);
@@ -244,7 +239,7 @@ void Filterbank::processBlock (const juce::AudioBuffer<float>& input,
                 pendingCount_[static_cast<size_t> (ch)] = 0;
             }
 
-            for (int b = 0; b < kNumBands; ++b)
+            for (int b = 0; b < kNumOutputBands; ++b)
             {
                 auto& ring = rings_[static_cast<size_t> (ch)][static_cast<size_t> (b)];
                 const auto read = ringRead_[static_cast<size_t> (ch)][static_cast<size_t> (b)];
