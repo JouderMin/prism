@@ -267,8 +267,13 @@ void PrismAudioProcessorEditor::resized()
     constexpr float logoAspect = 5.646f; // Assets/logo.svg: 73.237 / 12.969
     const auto logoWidth = logoHeight * logoAspect;
 
+    // 字标是小写字重、带 g 的下伸部，墨量偏上；几何居中后视觉上比 PRISM 高约 2 px，
+    // 因此下沉 2 px 做光学对齐（m01133）。
+    constexpr float logoOpticalOffsetY = 2.0f;
+
     logoBounds = juce::Rectangle<float> (static_cast<float> (titleRowBounds.getX()),
-                                         static_cast<float> (titleRowBounds.getCentreY()) - logoHeight * 0.5f,
+                                         static_cast<float> (titleRowBounds.getCentreY()) - logoHeight * 0.5f
+                                             + logoOpticalOffsetY,
                                          logoWidth,
                                          logoHeight);
     prismTextBounds = titleRowBounds.withTrimmedLeft (juce::roundToInt (logoWidth) + 14);
