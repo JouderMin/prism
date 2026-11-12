@@ -35,7 +35,7 @@ struct Spec
 // 范围与默认值照 spec 第 6 节。
 inline constexpr std::array<Spec, 5> kSpecs { {
     { amount, "AMOUNT", 0.0f, 100.0f, 50.0f, " %", 0 },
-    { spectrum, "SPECTRUM", -100.0f, 100.0f, 0.0f, "", 0 },
+    { spectrum, "SPECTRUM", -100.0f, 100.0f, 0.0f, " %", 0 },
     { mix, "MIX", 0.0f, 100.0f, 100.0f, " %", 0 },
     { input, "INPUT", -12.0f, 24.0f, 0.0f, " dB", 1 },
     { output, "OUTPUT", -24.0f, 12.0f, 0.0f, " dB", 1 },
@@ -53,11 +53,14 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         const juce::NormalisableRange<float> range (spec.minValue, spec.maxValue);
         const juce::String suffix (spec.suffix);
         const int decimals = spec.decimals;
+        // 只有 SPECTRUM 的正值带 "+"，负数与 0 保持原样；INPUT/OUTPUT 仍显示 "0.0 dB"。
+        const bool showPlus = juce::String (spec.id) == juce::String (parameters::spectrum);
 
         auto attributes = juce::AudioParameterFloatAttributes().withStringFromValueFunction(
-            [suffix, decimals] (float value, int)
+            [suffix, decimals, showPlus] (float value, int)
             {
-                return juce::String (value, decimals) + suffix;
+                const auto sign = showPlus && value > 0.0f ? juce::String ("+") : juce::String();
+                return sign + juce::String (value, decimals) + suffix;
             });
 
         layout.add (std::make_unique<juce::AudioParameterFloat> (spec.id,

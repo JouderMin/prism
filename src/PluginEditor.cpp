@@ -16,9 +16,15 @@ const juce::Colour hintColour       { 0xff6a6a78 };
 
 constexpr int kTimerHz = 30;
 
-// 频段文字标签，从左到右与 kBands 对齐。
-const char* const kBandRanges[7] = { "20-80", "80-200", "200-500", "500-1.2k",
-                                     "1.2-3k", "3-8k", "8k+" };
+// 频段文字标签，从左到右与 kBands 对齐。用 UTF-8 的 en dash（U+2013），
+// 避免 juce::String(const char*) 的 ASCII 断言；绘制时走 String::fromUTF8。
+const char* const kBandRanges[7] = { "20\xe2\x80\x93" "80",
+                                     "80\xe2\x80\x93" "200",
+                                     "200\xe2\x80\x93" "500",
+                                     "500\xe2\x80\x93" "1.2k",
+                                     "1.2\xe2\x80\x93" "3k",
+                                     "3\xe2\x80\x93" "8k",
+                                     "8k+" };
 
 void configureKnob (juce::Slider& knob)
 {
@@ -132,6 +138,17 @@ void PrismAudioProcessorEditor::drawMeters (juce::Graphics& g) const
         g.setColour (trackColour);
         g.fillRoundedRectangle (slot, 4.0f);
 
+        // 0 电平时也画一层低亮度辉光：柱内自下而上约 5% 高度，顶部透明。
+        // 有信号时真实电平条叠在辉光上，不会把辉光误认成信号。
+        const auto glowHeight = slot.getHeight() * 0.05f;
+        const auto glow = slot.withTop (slot.getBottom() - glowHeight).reduced (1.0f, 0.0f);
+
+        g.setGradientFill (juce::ColourGradient (colour.withAlpha (0.30f),
+                                                 glow.getX(), glow.getBottom(),
+                                                 colour.withAlpha (0.0f),
+                                                 glow.getX(), glow.getY(), false));
+        g.fillRoundedRectangle (glow, 4.0f);
+
         const auto litHeight = std::max (2.0f, slot.getHeight() * level);
         auto lit = slot.withTop (slot.getBottom() - litHeight).reduced (1.0f, 0.0f);
 
@@ -152,11 +169,17 @@ void PrismAudioProcessorEditor::drawMeters (juce::Graphics& g) const
 
         g.setColour (hintColour);
         g.setFont (juce::Font (juce::FontOptions { 10.0f, juce::Font::plain }));
-        g.drawText (kBandRanges[band],
+        g.drawText (juce::String::fromUTF8 (kBandRanges[band]),
                     labels.withX (static_cast<int> (slot.getX()))
                           .withWidth (static_cast<int> (columnWidth)),
                     juce::Justification::centred, false);
     }
+
+    // 单位只标一次：标签行最右侧的暗淡 "Hz"，不在每个频段重复。
+    auto unitArea = labels.removeFromRight (22);
+    g.setColour (hintColour.withAlpha (0.6f));
+    g.setFont (juce::Font (juce::FontOptions { 12.0f, juce::Font::plain }));
+    g.drawText ("Hz", unitArea, juce::Justification::centredRight, false);
 }
 
 void PrismAudioProcessorEditor::resized()

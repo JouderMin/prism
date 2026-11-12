@@ -39,6 +39,7 @@ public:
 
             int sliderCount = 0;
             juce::Slider* amountKnob = nullptr;
+            juce::Slider* spectrumKnob = nullptr;
 
             for (int i = 0; i < editor->getNumChildComponents(); ++i)
             {
@@ -48,6 +49,9 @@ public:
 
                     if (slider->getName() == "AMOUNT")
                         amountKnob = slider;
+
+                    if (slider->getName() == "SPECTRUM")
+                        spectrumKnob = slider;
                 }
             }
 
@@ -59,6 +63,15 @@ public:
                 expectWithinAbsoluteError (amountKnob->getValue(), 50.0, 1.0e-3);
                 expectEquals (amountKnob->getTextFromValue (amountKnob->getValue()),
                               juce::String ("50 %"));
+            }
+
+            expect (spectrumKnob != nullptr);
+
+            if (spectrumKnob != nullptr)
+            {
+                expectEquals (spectrumKnob->getTextFromValue (25.0), juce::String ("+25 %"));
+                expectEquals (spectrumKnob->getTextFromValue (0.0), juce::String ("0 %"));
+                expectEquals (spectrumKnob->getTextFromValue (-50.0), juce::String ("-50 %"));
             }
 
             editor.reset();
