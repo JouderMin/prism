@@ -87,6 +87,15 @@ void Filterbank::prepare (double sampleRate)
     jassert (sampleRate > 0.0);
 
     sampleRate_ = sampleRate;
+
+    // 低采样率保护：分频点不得超过 0.45·fs（低于 Nyquist 留 10% 余量）。
+    // 例：11.025 kHz 下 14 kHz 会被夹到 4961.25 Hz；min 保持升序，
+    // 相邻点重合时对应段系数为 0，7 段求和仍恒等于输入。
+    const auto maxCutoff = 0.45 * sampleRate;
+
+    for (int k = 0; k < kNumCrossovers; ++k)
+        crossovers_[static_cast<size_t> (k)] = std::min (kCrossoverPointsHz[k], maxCutoff);
+
     rebuild();
     reset();
 }
@@ -102,7 +111,7 @@ void Filterbank::rebuild()
 
     for (int k = 0; k < kNumCrossovers; ++k)
     {
-        const auto lowpass = designLowpass (static_cast<float> (kCrossoverPointsHz[k]),
+        const auto lowpass = designLowpass (static_cast<float> (crossovers_[static_cast<size_t> (k)]),
                                             sampleRate_, taps_, kKaiserBeta);
         auto& band = coefficients[static_cast<size_t> (k)];
         band.resize (static_cast<size_t> (taps_));

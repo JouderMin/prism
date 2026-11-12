@@ -10,7 +10,7 @@ inline constexpr int kNumBands = 7;
 inline constexpr int kNumCrossovers = 6;
 
 /** 6 个分频点，单位 Hz。 */
-inline constexpr double kCrossoverPointsHz[kNumCrossovers] = { 80.0, 200.0, 500.0, 1200.0, 3000.0, 8000.0 };
+inline constexpr double kCrossoverPointsHz[kNumCrossovers] = { 150.0, 500.0, 1200.0, 3000.0, 8000.0, 14000.0 };
 
 /** 默认抽头数与 Kaiser beta。 */
 inline constexpr int kDefaultTaps = 2049;

@@ -61,6 +61,7 @@ private:
     int taps_;
     int fftSize_;
     double sampleRate_ = 0.0;
+    std::array<double, kNumCrossovers> crossovers_ {};
     juce::dsp::FFT fft_;
 
     std::array<std::vector<float>, kNumBands> bandSpectra_;

@@ -194,6 +194,7 @@ public:
         testLatency();
         testSingleBandGainOutOfBand();
         testSampleRateChange();
+        testLowSampleRateClamp();
     }
 
 private:
@@ -357,12 +358,13 @@ private:
             const auto leakDb = toDecibels (leakRms / inputRms);
 
             logMessage ("band 2 leakage at 40 Hz: " + juce::String (leakDb, 2) + " dB");
-            // spec 5.2 实测表：2049 抽头、Kaiser β=8 的段外泄漏是 −33.3 dB。
-            // plan 里写的 −35 dB 与 spec 表冲突；这里按 spec 实测留 0.7 dB 余量。
-            expectLessThan (leakDb, -32.0f);
+            // 新边界下 40 Hz 完全落在段 1（<150 Hz），段 2 在此处只有数值泄漏。
+            // 实测 −101.35 dB（2049 抽头、Kaiser β=8）；阈值取 −98 dB，留 3 dB 余量。
+            // 段 2 真正的“带外一个倍频程”是 75 Hz，由单段带外用例覆盖。
+            expectLessThan (leakDb, -98.0f);
         }
 
-        // 1 kHz 应主要落在段 4（500–1200 Hz）。
+        // 1 kHz 应主要落在段 3（500–1200 Hz）。
         {
             filterbank.reset();
 
@@ -374,18 +376,18 @@ private:
             processInBlocks (filterbank, input, bands);
 
             const auto inputRms = rmsOf (input, 0, measureStart, measured);
-            const auto band4Rms = rmsOf (bands[3], 0, measureStart, measured);
+            const auto band3Rms = rmsOf (bands[2], 0, measureStart, measured);
 
             auto loudestOther = 0.0f;
 
             for (int b = 0; b < kNumBands; ++b)
-                if (b != 3)
+                if (b != 2)
                     loudestOther = juce::jmax (loudestOther, rmsOf (bands[static_cast<size_t> (b)], 0, measureStart, measured));
 
-            const auto passbandDb = toDecibels (band4Rms / inputRms);
-            const auto dominanceDb = toDecibels (band4Rms / juce::jmax (1.0e-9f, loudestOther));
+            const auto passbandDb = toDecibels (band3Rms / inputRms);
+            const auto dominanceDb = toDecibels (band3Rms / juce::jmax (1.0e-9f, loudestOther));
 
-            logMessage ("band 4 passband at 1 kHz: " + juce::String (passbandDb, 2)
+            logMessage ("band 3 passband at 1 kHz: " + juce::String (passbandDb, 2)
                         + " dB, dominance: " + juce::String (dominanceDb, 2) + " dB");
 
             expectLessThan (std::abs (passbandDb), 0.5f);
@@ -395,7 +397,7 @@ private:
 
     void testCrossoverEdge()
     {
-        beginTest ("crossover edge: band 1 is -6 dB at 80 Hz");
+        beginTest ("crossover edge: band 1 is -6 dB at 150 Hz");
 
         constexpr double sampleRate = 48000.0;
         constexpr int numSamples = 8192;
@@ -404,7 +406,7 @@ private:
         filterbank.prepare (sampleRate);
 
         juce::AudioBuffer<float> input (1, numSamples);
-        fillSine (input, 80.0, sampleRate, 0.5f);
+        fillSine (input, 150.0, sampleRate, 0.5f);
 
         std::array<juce::AudioBuffer<float>, kNumBands> bands;
         makeBands (bands, 1, numSamples);
@@ -419,7 +421,7 @@ private:
         const auto band1Rms = rmsOf (bands[0], 0, measureStart, measured);
         const auto band1Db = toDecibels (band1Rms / inputRms);
 
-        logMessage ("band 1 at 80 Hz: " + juce::String (band1Db, 2) + " dB");
+        logMessage ("band 1 at 150 Hz: " + juce::String (band1Db, 2) + " dB");
         expectWithinAbsoluteError (band1Db, -6.02f, 0.5f);
     }
 
@@ -475,8 +477,8 @@ private:
         // 判据：只把段 k 的输出乘 0.5（−6 dB），其余段保持 1。7 段求和本应重建输入，
         // 因此 y_k = 输入（延迟对齐）+ (0.5 − 1)·段 k。若段 k 的增益变化外溢到相邻段，
         // 它通带外一个倍频程处会出现可测幅度偏差。spec 9.1 的验算值为 0.00 dB；
-        // 这里容差取 0.5 dB，覆盖 2049 抽头过渡带泄漏（段 2 在 40 Hz 泄漏 −32.8 dB，
-        // 理论偏差约 0.1 dB）。段 1 下侧与段 7 上侧没有“通带外一个倍频程”，跳过。
+        // 这里容差取 0.5 dB，覆盖 2049 抽头过渡带泄漏（实测 11 个测点偏差均 ≤ 0.001 dB）。
+        // 段 1 下侧与段 7 上侧没有“通带外一个倍频程”，跳过。
         constexpr double sampleRate = 48000.0;
         constexpr int numSamples = 16384;
         constexpr int taps = 2049;
@@ -487,13 +489,13 @@ private:
         struct Probe { int band; double lowerHz; double upperHz; };
 
         const Probe probes[] = {
-            { 0, 0.0,    160.0 },   // 段 1（20–80）：只有上侧 160 Hz。
-            { 1, 40.0,   400.0 },   // 段 2（80–200）。
-            { 2, 100.0,  1000.0 },  // 段 3（200–500）。
-            { 3, 250.0,  2400.0 },  // 段 4（500–1200）。
-            { 4, 600.0,  6000.0 },  // 段 5（1200–3000）。
-            { 5, 1500.0, 16000.0 }, // 段 6（3000–8000）。
-            { 6, 4000.0, 0.0 },     // 段 7（8k+）：只有下侧 4 kHz。
+            { 0, 0.0,    300.0 },   // 段 1（<150）：只有上侧 300 Hz。
+            { 1, 75.0,   1000.0 },  // 段 2（150–500）。
+            { 2, 250.0,  2400.0 },  // 段 3（500–1200）。
+            { 3, 600.0,  6000.0 },  // 段 4（1200–3000）。
+            { 4, 1500.0, 16000.0 }, // 段 5（3000–8000）。
+            { 5, 4000.0, 0.0 },     // 段 6（8000–14000）：上侧 28 kHz 超 Nyquist，只测下侧。
+            { 6, 7000.0, 0.0 },     // 段 7（>14000）：只有下侧 7 kHz。
         };
 
         prism::Filterbank filterbank (taps);
@@ -530,13 +532,61 @@ private:
 
                 const auto deviationDb = 20.0 * std::log10 (outputAmplitude / inputAmplitude);
 
+                const auto inputRms = rmsOf (input, 0, measureStart, measureLength);
+                const auto bandRms = rmsOf (bands[static_cast<size_t> (probe.band)], 0,
+                                            measureStart, measureLength);
+                const auto leakageDb = toDecibels (bandRms / inputRms);
+
                 logMessage ("band " + juce::String (probe.band + 1) + " @ "
-                            + juce::String (frequency, 1) + " Hz: deviation "
+                            + juce::String (frequency, 1) + " Hz: leakage "
+                            + juce::String (leakageDb, 2) + " dB, deviation "
                             + juce::String (deviationDb, 3) + " dB");
 
                 expectLessThan (std::abs (deviationDb), 0.5);
             }
         }
+    }
+
+    void testLowSampleRateClamp()
+    {
+        beginTest ("11.025 kHz: crossovers clamp to 0.45*fs and reconstruction holds");
+
+        // 14 kHz 超过 11.025 kHz 的 Nyquist。prepare 把每个分频点夹到 min(point, 0.45·fs)，
+        // 因此 designLowpass 不会收到 >= fs/2 的截止频率（否则其 jassert 会在 debug 触发）。
+        // 相邻点重合时该段系数为 0，7 段求和仍恒等于输入。
+        constexpr double sampleRate = 11025.0;
+        constexpr int numSamples = 8192;
+
+        prism::Filterbank filterbank (2049);
+        filterbank.prepare (sampleRate);
+
+        expectEquals (filterbank.latencySamples(), 1152);
+
+        juce::AudioBuffer<float> noise (1, numSamples);
+        juce::Random random (9012);
+
+        for (int i = 0; i < numSamples; ++i)
+            noise.setSample (0, i, (random.nextFloat() * 2.0f - 1.0f) * 0.5f);
+
+        std::array<juce::AudioBuffer<float>, kNumBands> bands;
+        makeBands (bands, 1, numSamples);
+        processInBlocks (filterbank, noise, bands);
+
+        const auto latency = filterbank.latencySamples();
+        auto maxError = 0.0f;
+
+        for (int i = latency; i < numSamples; ++i)
+        {
+            auto sum = 0.0f;
+
+            for (int b = 0; b < kNumBands; ++b)
+                sum += bands[static_cast<size_t> (b)].getSample (0, i);
+
+            maxError = juce::jmax (maxError, std::abs (sum - noise.getSample (0, i - latency)));
+        }
+
+        logMessage ("11.025 kHz max reconstruction error: " + juce::String (maxError, 9));
+        expectLessThan (maxError, 1.0e-6f);
     }
 
     void testSampleRateChange()
@@ -577,11 +627,11 @@ private:
         logMessage ("96 kHz max reconstruction error: " + juce::String (maxError, 9));
         expectLessThan (maxError, 1.0e-6f);
 
-        // 换采样率后 80 Hz 仍应为 −6 dB。
+        // 换采样率后 150 Hz 仍应为 −6 dB。
         filterbank.reset();
 
         juce::AudioBuffer<float> sine (1, numSamples);
-        fillSine (sine, 80.0, sampleRate, 0.5f);
+        fillSine (sine, 150.0, sampleRate, 0.5f);
 
         std::array<juce::AudioBuffer<float>, kNumBands> sineBands;
         makeBands (sineBands, 1, numSamples);
@@ -594,7 +644,7 @@ private:
         const auto band1Rms = rmsOf (sineBands[0], 0, measureStart, measured);
         const auto band1Db = toDecibels (band1Rms / inputRms);
 
-        logMessage ("96 kHz band 1 at 80 Hz: " + juce::String (band1Db, 2) + " dB");
+        logMessage ("96 kHz band 1 at 150 Hz: " + juce::String (band1Db, 2) + " dB");
         expectWithinAbsoluteError (band1Db, -6.02f, 0.5f);
     }
 };

@@ -18,13 +18,13 @@ constexpr int kTimerHz = 30;
 
 // 频段文字标签，从左到右与 kBands 对齐。用 UTF-8 的 en dash（U+2013），
 // 避免 juce::String(const char*) 的 ASCII 断言；绘制时走 String::fromUTF8。
-const char* const kBandRanges[7] = { "20\xe2\x80\x93" "80",
-                                     "80\xe2\x80\x93" "200",
-                                     "200\xe2\x80\x93" "500",
+const char* const kBandRanges[7] = { "20\xe2\x80\x93" "150",
+                                     "150\xe2\x80\x93" "500",
                                      "500\xe2\x80\x93" "1.2k",
                                      "1.2\xe2\x80\x93" "3k",
                                      "3\xe2\x80\x93" "8k",
-                                     "8k+" };
+                                     "8\xe2\x80\x93" "14k",
+                                     "14k+" };
 
 void configureKnob (juce::Slider& knob)
 {
