@@ -15,6 +15,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # 默认 OFF：沙箱不能写 ~/Library。安装与 auval 由验证阶段显式开 ON。
 option(PRISM_COPY_PLUGINS "Build 后把插件拷进 ~/Library/Audio/Plug-Ins" OFF)
 
+# AU 只有 Apple 平台可用；Windows CI 显式关掉，只构建 VST3 与 Standalone。
+option(PRISM_BUILD_AU "构建 AU 目标（仅 macOS）" ON)
+
+# 插件与测试共用同一套警告；MSVC 不认识 -Wextra/-Wpedantic 等 GCC 选项。
+function(prism_set_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /utf-8)
+    else()
+        target_compile_options(${target} PRIVATE
+            -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
+    endif()
+endfunction()
+
 # ---- JUCE -----------------------------------------------------------------
 # 首选 vcpkg 提供的 JUCEConfig.cmake；兜底用 third_party/JUCE 子模块（见
 # third_party/README.md，对应 spec R1）。
@@ -74,8 +87,7 @@ function(prism_add_plugin target kind sign_mode)
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0)
 
-    target_compile_options(${target} PRIVATE
-        -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
+    prism_set_warnings(${target})
 
     target_link_libraries(${target} PRIVATE
         juce::juce_audio_utils
@@ -86,24 +98,28 @@ function(prism_add_plugin target kind sign_mode)
         juce::juce_recommended_lto_flags
         PrismBinaryData)
 
-    # Ad-hoc 签名；AU 需要 --deep（spec 8.4）。
-    set(artefact_target "${target}_${kind}")
+    # Ad-hoc 签名；AU 需要 --deep（spec 8.4）。Windows 没有 codesign。
+    if(APPLE)
+        set(artefact_target "${target}_${kind}")
 
-    if(sign_mode STREQUAL "deep")
-        add_custom_command(TARGET ${artefact_target} POST_BUILD
-            COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:${artefact_target}>"
-            COMMENT "ad-hoc 签名 ${artefact_target}（AU，--deep）"
-            VERBATIM)
-    else()
-        add_custom_command(TARGET ${artefact_target} POST_BUILD
-            COMMAND codesign --force -s - "$<TARGET_BUNDLE_DIR:${artefact_target}>"
-            COMMENT "ad-hoc 签名 ${artefact_target}"
-            VERBATIM)
+        if(sign_mode STREQUAL "deep")
+            add_custom_command(TARGET ${artefact_target} POST_BUILD
+                COMMAND codesign --force --deep -s - "$<TARGET_BUNDLE_DIR:${artefact_target}>"
+                COMMENT "ad-hoc 签名 ${artefact_target}（AU，--deep）"
+                VERBATIM)
+        else()
+            add_custom_command(TARGET ${artefact_target} POST_BUILD
+                COMMAND codesign --force -s - "$<TARGET_BUNDLE_DIR:${artefact_target}>"
+                COMMENT "ad-hoc 签名 ${artefact_target}"
+                VERBATIM)
+        endif()
     endif()
 endfunction()
 
 # ---- AU -------------------------------------------------------------------
-prism_add_plugin(PrismAU AU deep FORMATS AU)
+if(APPLE AND PRISM_BUILD_AU)
+    prism_add_plugin(PrismAU AU deep FORMATS AU)
+endif()
 
 # ---- VST3 -----------------------------------------------------------------
 prism_add_plugin(PrismVST3 VST3 plain FORMATS VST3)

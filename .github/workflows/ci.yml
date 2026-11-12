@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-14
+            triplet: arm64-osx
+            generator: Ninja
+            generator_args: ""
+            build_command: cmake --build build/ci --parallel
+            test_binary: ./build/ci/PrismTests
+          - name: Windows x64
+            os: windows-2022
+            triplet: x64-windows
+            generator: Visual Studio 17 2022
+            generator_args: -A x64
+            build_command: cmake --build build/ci --config Release --parallel
+            test_binary: ./build/ci/Release/PrismTests.exe
+    env:
+      # vcpkg 二进制缓存；key 含 triplet 与 JUCE 版本，换版本时自动失效。
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create vcpkg binary cache directory
+        shell: bash
+        run: mkdir -p vcpkg-cache
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ matrix.triplet }}-juce-8.0.7
+          restore-keys: |
+            vcpkg-${{ matrix.triplet }}-
+
+      # 仓库不自带 vcpkg，每次 CI 浅克隆并 bootstrap。
+      - name: Clone vcpkg
+        shell: bash
+        run: git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
+
+      - name: Bootstrap vcpkg (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Install JUCE
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ./vcpkg/vcpkg.exe install juce --triplet ${{ matrix.triplet }}
+          else
+            ./vcpkg/vcpkg install juce --triplet ${{ matrix.triplet }}
+          fi
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build/ci \
+            -G "${{ matrix.generator }}" ${{ matrix.generator_args }} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
+            -DPRISM_BUILD_AU=OFF \
+            -DPRISM_COPY_PLUGINS=OFF
+
+      - name: Build
+        shell: bash
+        run: ${{ matrix.build_command }}
+
+      - name: Run tests
+        shell: bash
+        run: ${{ matrix.test_binary }}

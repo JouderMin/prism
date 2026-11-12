@@ -15,8 +15,7 @@ target_compile_definitions(PrismBench PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0)
 
-target_compile_options(PrismBench PRIVATE
-    -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
+prism_set_warnings(PrismBench)
 
 target_link_libraries(PrismBench PRIVATE
     juce::juce_dsp

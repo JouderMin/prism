@@ -23,8 +23,7 @@ target_compile_definitions(PrismTests PRIVATE
 
 # 注意：不要定义 JUCE_UNIT_TESTS，否则会把 JUCE 自带的内部测试也注册进来。
 
-target_compile_options(PrismTests PRIVATE
-    -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
+prism_set_warnings(PrismTests)
 
 target_link_libraries(PrismTests PRIVATE
     juce::juce_dsp
