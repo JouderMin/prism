@@ -88,6 +88,8 @@ cmake --build --preset debug --target PrismTests
 
 测试会刷新 `build/debug/editor-snapshot.png`，可开图核对界面。提交前要求 debug 与 release 各构建一次、测试全过、`src/` 与 `tests/` 无新警告。
 
+GitHub Actions 在 macOS arm64 与 Windows x64 上构建并跑测试，同时把编译好的 AU、VST3、Standalone 作为运行产物上传，可从对应运行的 Artifacts 下载。
+
 ### 安装验证
 
 ```sh
