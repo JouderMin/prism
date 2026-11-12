@@ -178,8 +178,9 @@ LR4 二分树频段干净（段 2 在 40 Hz 为 −24.6 dB），但求和会塌�
 `s_b` 标定条件：48 kHz、1 kHz 正弦、−18 → −6 dBFS 稳态（后半程 RMS），setDrive(0)；修正检测器权重后重标，实测斜率 1.502 / 1.802 / 2.000 / 2.200 / 2.501 / 2.799 / 2.999，误差 ≤ 0.005。
 `s_b` 是各段灵敏度补偿：低频段在混合后占比大，需要更低的驱动量才能落在目标斜率上。
 
-"释放快段/尾段"是实测目标，不是独立时间常数。
-它们由检测器 release、τ_ldr 与 R(d) 的非线性共同产生，M2 用阶跃响应测出并记录实际值。
+"释放快段/尾段"是设计目标，不是当前实现里的字段。
+当前实现只有一条释放路径：检测器 60 ms 加 τ_ldr 一阶跟随，`releaseFastMs` 与 `releaseTailMs` 未被任何代码读取，留作 M4 双时间常数释放的参数。
+实测 90% 恢复时间见下表。
 
 实测 90% 恢复时间（−6 → −18 dBFS，48 kHz，增益恢复到稳态 90%）：段 1–7 = 232.5 / 202.8 / 175.5 / 155.2 / 139.7 / 125.2 / 114.0 ms。
 
@@ -229,11 +230,13 @@ LR4 二分树频段干净（段 2 在 40 Hz 为 −24.6 dB），但求和会塌�
 
 首版只求能用，美术后做。
 
-- 顶部：Stargazer 标志（`Assets/logo.svg` 转 PNG 或路径绘制）。
-- 中部：7 根竖直光柱，颜色对应频段，亮度实时反映该段光强。
-  光柱兼作电平表，压缩越深越暗。
-- 下部：AMOUNT、SPECTRUM、MIX、INPUT、OUTPUT 五个旋钮。
-- 深色背景，尺寸 720 × 480，可缩放。
+- 顶部：左侧标题文字 `PRISM`，右侧一行小字 `SEVEN-BAND OPTO COMPRESSOR`。品牌标志（`Assets/logo.svg`）与字体美术留到 M5。
+- 中部：7 根竖直光柱，颜色对应频段，柱高反映该段光强，压缩越深越暗。
+  静音时保留 5% 柱高的低亮度彩光，让人看出这是 7 束光，而不是 7 个空槽。
+- 光柱下方一行频段标签：20–80、80–200、200–500、500–1.2k、1.2–3k、3–8k、8k+，行尾一个小的 `Hz`。连接符用 en dash。
+- 下部：AMOUNT、SPECTRUM、MIX、INPUT、OUTPUT 五个旋钮，垂直拖动。
+  数值格式：AMOUNT `50 %`、SPECTRUM `0 %`（正数带 `+` 号）、MIX `100 %`、INPUT 与 OUTPUT `0.0 dB`。
+- 深色背景，尺寸固定 720 × 480，不可缩放。可缩放留到 M5。
 
 ## 8. 构建
 
@@ -242,13 +245,13 @@ LR4 二分树频段干净（段 2 在 40 Hz 为 −24.6 dB），但求和会塌�
 JUCE 8.0.7，用 vcpkg 提供：
 
 ```sh
-vcpkg install juce          # 本机安装树尚无 juce，现有 asio、mimalloc、vst3sdk
+vcpkg install juce --triplet arm64-osx     # 本机安装树原无 juce，现有 asio、mimalloc、vst3sdk
 ```
 
 CMake 通过 vcpkg toolchain 使用：
 
 ```sh
-cmake --preset default      # 内含 -DCMAKE_TOOLCHAIN_FILE=~/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --preset debug      # 或 --preset release；两者都含 vcpkg toolchain 与 arm64-osx
 ```
 
 vcpkg port 提供 `find_package(JUCE CONFIG)` 与宿主工具 juceaide，`juce_add_plugin` 可直接用。
@@ -298,7 +301,7 @@ juce_add_plugin(PrismStandalone
 | `IS_SYNTH` | FALSE |
 | `NEEDS_MIDI_INPUT` / `NEEDS_MIDI_OUTPUT` | FALSE |
 | `EDITOR_WANTS_KEYBOARD_FOCUS` | FALSE |
-| `COPY_PLUGIN_AFTER_BUILD` | TRUE（AU 进 `~/Library/Audio/Plug-Ins/Components`，VST3 进 `VST3`） |
+| `COPY_PLUGIN_AFTER_BUILD` | 由 `PRISM_COPY_PLUGINS` 选项控制，默认 OFF（沙箱不能写 `~/Library`） |
 | `MICROPHONE_PERMISSION_ENABLED` | TRUE，仅 Standalone |
 
 `juce_add_plugin` 会自动完成 AU 的 `aufx`/`Prsm`/`Stgz` 三元组、plist、bundle 布局与 JUCE 模块编译，这些都不需要自定义规则。
@@ -355,7 +358,7 @@ M1 只做一个透传插件，验证下面 6 条，全部通过才进入 DSP。
 - 延迟：脉冲测群延迟，等于 1152 样本。
 - 单段压缩重建：只压一段 6 dB，测该段两侧一个倍频程外的偏差，应低于 0.5 dB。验算值为 0.00 dB。
 - 静态曲线：逐段扫电平，实测斜率与 5.4 的目标值相差不超过 0.5。
-- 释放曲线：−18 dBFS 到 −6 dBFS 的阶跃，记录 90% 恢复时间，快段与尾段分别记录。dB 域线性度取恢复量的 20%–80% 拟合，偏差 < 1 dB；按 10%–90% 全区间拟合会到 1.6 dB，属双时间常数正常形状，不作为失败项。
+- 释放曲线：−18 dBFS 到 −6 dBFS 的阶跃，记录 90% 恢复时间，当前实测 114.0–232.5 ms（逐段见 5.4）。dB 域线性度取恢复量的 20%–80% 拟合，偏差 < 1 dB；按 10%–90% 全区间拟合会到 1.6 dB，属双时间常数正常形状，不作为失败项。快段与尾段分别记录留到 M4。
 - 无输入：静音输入，输出必须为静音，不得出 NaN。
 
 ### 9.2 手动
