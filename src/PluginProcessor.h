@@ -48,6 +48,12 @@ public:
     // 公开给测试与处理器内部使用；生命周期与 processor 相同。
     juce::AudioProcessorValueTreeState apvts;
 
+    // 每段光强（0..1），界面线程 30 Hz 以 relaxed 读取。
+    std::array<std::atomic<float>, prism::PrismDsp::kNumBands>& meters() noexcept
+    {
+        return dsp.meters();
+    }
+
 private:
     // 参数指针在构造时缓存，音频线程只做 atomic load，不查表、不加锁。
     void cacheParameterPointers();
