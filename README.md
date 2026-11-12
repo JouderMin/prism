@@ -7,7 +7,7 @@ JUCE 8.0.7 + CMake + C++20。品牌 Stargazer。
 ## 当前状态
 
 - 三个目标可构建：AU、VST3、Standalone。
-- 25 条自动化测试通过。
+- 26 条自动化测试通过。
 - AU 在本机通过 `auval -v aufx Prsm Stgz`（t1 透传版本）。当前版本的 auval 待复验。
 - 界面为 MVP：7 根光柱加 5 个旋钮。
 - 未做：双时间常数释放、预设、A/B、侧链。
@@ -100,7 +100,7 @@ src/dsp/PrismDsp.*      整机引擎
 src/Parameters.h        APVTS 参数与状态
 src/PluginProcessor.*   处理器接线
 src/PluginEditor.*      界面
-tests/                  25 条单元测试与快照
+tests/                  26 条单元测试与快照
 ```
 
 ## 文档
