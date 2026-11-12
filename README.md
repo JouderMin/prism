@@ -1,0 +1,115 @@
+# PRISM
+
+七段光电压缩器。信号拆成 7 个频段，每段用自己的颜色照一个光敏电阻，得到 7 条压缩曲线，再求和。
+
+JUCE 8.0.7 + CMake + C++20。品牌 Stargazer。
+
+## 当前状态
+
+- 三个目标可构建：AU、VST3、Standalone。
+- 25 条自动化测试通过，AU 通过 `auval -v aufx Prsm Stgz`。
+- 界面为 MVP：7 根光柱加 5 个旋钮。
+- 未做：双时间常数释放、预设、A/B、侧链。
+
+## 信号路径
+
+```
+输入 → 增益 → 线性相位分频（7 段）→ 每段前馈光电增益 → 求和 → 干湿混合 → 增益 → 输出
+```
+
+- 分频用 2049 抽头线性相位 FIR，Kaiser β=8。段 = `LP_k − LP_{k−1}`，求和恒为 1。
+- 每段检测器 attack 10 ms、release 60 ms，前馈。光敏电阻 `R = R_dark / (1 + (d/d0)^γ)`。
+- 每段 auto-gain 补偿长期漂移：500 ms，上限 ±12 dB，小于 0.1 dB 不补。
+- 干声走同样延迟的环形缓冲，MIX 不产生梳状滤波。
+
+## 延迟
+
+1152 样本。48 kHz 下 24.0 ms，96 kHz 下 12.0 ms。插件向宿主报告延迟，宿主自动补偿。
+
+## 构建
+
+前置：Xcode 命令行工具、CMake 3.28 以上、Ninja、vcpkg，并装 juce 8.0.7。
+
+```sh
+cd ~/vcpkg && ./vcpkg install juce --triplet arm64-osx
+cd <repo> && cmake --preset release
+cmake --build --preset release
+```
+
+产物在 `build/release/Prism*_artefacts/Release/`。
+
+插件的 post-build 拷贝默认关闭（`PRISM_COPY_PLUGINS=OFF`），因为沙箱不能写 `~/Library`。要拷贝就构建具体目标：
+
+```sh
+cmake --preset release -DPRISM_COPY_PLUGINS=ON
+cmake --build --preset release --target PrismAU_AU
+cmake --build --preset release --target PrismVST3_VST3
+```
+
+## 安装与验证
+
+```sh
+cp -R build/release/PrismAU_artefacts/Release/AU/PRISM.component ~/Library/Audio/Plug-Ins/Components/
+killall -9 AudioComponentRegistrar
+auval -v aufx Prsm Stgz
+cp -R build/release/PrismVST3_artefacts/Release/VST3/PRISM.vst3 ~/Library/Audio/Plug-Ins/VST3/
+```
+
+不装插件直接试听：`build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app`。
+
+## 测试
+
+```sh
+cmake --build --preset debug --target PrismTests
+./build/debug/PrismTests
+```
+
+测试会顺带刷出 `build/debug/editor-snapshot.png`，可开图核对界面。
+
+## 参数
+
+| 名称 | 范围 | 默认 | 说明 |
+|---|---|---|---|
+| AMOUNT | 0–100 % | 50 | 驱动量，映射到光强，最大 18 dB |
+| SPECTRUM | −100–+100 % | 0 | 光谱倾斜，负压低频段、正压高频段，±6 dB |
+| MIX | 0–100 % | 100 | 干湿比 |
+| INPUT | −12–+24 dB | 0 | 输入增益 |
+| OUTPUT | −24–+12 dB | 0 | 输出增益 |
+
+## 频段
+
+| 段 | 范围 | 颜色 | 波长 | γ | 目标斜率 |
+|---|---|---|---|---|---|
+| 1 | 20–80 Hz | 红 | 700 nm | 0.90 | 1.5:1 |
+| 2 | 80–200 Hz | 橙 | 620 nm | 0.95 | 1.8:1 |
+| 3 | 200–500 Hz | 黄 | 580 nm | 1.00 | 2.0:1 |
+| 4 | 500–1.2 kHz | 绿 | 530 nm | 1.05 | 2.2:1 |
+| 5 | 1.2–3 kHz | 青 | 500 nm | 1.10 | 2.5:1 |
+| 6 | 3–8 kHz | 蓝 | 470 nm | 1.15 | 2.8:1 |
+| 7 | 8 kHz 以上 | 紫 | 420 nm | 1.20 | 3.0:1 |
+
+## 目录
+
+```
+src/dsp/FirDesign.*     窗函数法低通设计
+src/dsp/Filterbank.*    overlap-save 分频与重建
+src/dsp/BandTable.h     每段固定参数
+src/dsp/OptoBand.*      单段光电增益
+src/dsp/PrismDsp.*      整机引擎
+src/Parameters.h        APVTS 参数与状态
+src/PluginProcessor.*   处理器接线
+src/PluginEditor.*      界面
+tests/                  25 条单元测试与快照
+```
+
+## 文档
+
+- 设计：`docs/superpowers/specs/2026-11-12-prism-design.md`
+- 计划：`docs/superpowers/plans/2026-11-12-prism.md`
+- 验证记录：`docs/superpowers/verification/2026-11-12-prism-verification.md`
+
+## 已知限制
+
+- 只支持 arm64 macOS，只支持立体声输入输出。
+- 释放曲线只有单一时间常数 60 ms，双时间常数在 M4。
+- 界面没有电平刻度与增益衰减读数。
