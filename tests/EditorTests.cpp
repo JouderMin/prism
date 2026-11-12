@@ -112,6 +112,46 @@ public:
             editor.reset();
         }
 
+        beginTest ("wordmark is embedded in the title row left of PRISM");
+
+        std::unique_ptr<juce::AudioProcessorEditor> logoEditor (processor.createEditor());
+        auto* logoEditorTyped = dynamic_cast<PrismAudioProcessorEditor*> (logoEditor.get());
+        expect (logoEditorTyped != nullptr);
+
+        if (logoEditorTyped != nullptr)
+        {
+            const auto* drawable = logoEditorTyped->getLogoForTesting();
+            expect (drawable != nullptr);
+
+            if (drawable != nullptr)
+            {
+                const auto source = drawable->getDrawableBounds();
+                expect (source.getWidth() > 0.0f);
+                expect (source.getHeight() > 0.0f);
+
+                const auto aspect = source.getWidth() / source.getHeight();
+                expect (aspect >= 5.5f && aspect <= 5.8f);
+                logMessage ("wordmark drawable bounds: " + juce::String (source.getWidth(), 3)
+                            + " x " + juce::String (source.getHeight(), 3) + " pt");
+            }
+
+            const auto logoArea = logoEditorTyped->getLogoBoundsForTesting();
+            const auto titleArea = logoEditorTyped->getTitleRowBoundsForTesting();
+            const auto textArea = logoEditorTyped->getPrismTextBoundsForTesting();
+
+            expect (logoArea.getWidth() > 0.0f);
+            expect (logoArea.getHeight() > 0.0f);
+            expect (titleArea.contains (logoArea.toNearestInt()));
+            expect (logoArea.getRight() <= static_cast<float> (textArea.getX()));
+
+            logMessage ("wordmark pixel bounds: " + juce::String (logoArea.getX(), 1) + ", "
+                        + juce::String (logoArea.getY(), 1) + ", "
+                        + juce::String (logoArea.getWidth(), 1) + " x "
+                        + juce::String (logoArea.getHeight(), 1));
+        }
+
+        logoEditor.reset();
+
         beginTest ("editor snapshot is written as 720x480 PNG");
 
         // 截图前把三个读数改成非默认值，便于用快照核对格式。

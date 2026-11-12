@@ -31,6 +31,10 @@ if(NOT JUCE_FOUND)
     endif()
 endif()
 
+# ---- 静态资源 -------------------------------------------------------------
+# 界面字标以二进制数据编进目标；生成符号 BinaryData::logo_svg / logo_svgSize。
+juce_add_binary_data(PrismBinaryData SOURCES Assets/logo.svg)
+
 # ---- 共用源码 -------------------------------------------------------------
 # DSP 源码用 GLOB + CONFIGURE_DEPENDS，后续任务新增文件无需改本文件。
 file(GLOB PRISM_DSP_SOURCES CONFIGURE_DEPENDS
@@ -79,7 +83,8 @@ function(prism_add_plugin target kind sign_mode)
         juce::juce_dsp
         juce::juce_gui_basics
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags)
+        juce::juce_recommended_lto_flags
+        PrismBinaryData)
 
     # Ad-hoc 签名；AU 需要 --deep（spec 8.4）。
     set(artefact_target "${target}_${kind}")

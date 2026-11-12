@@ -32,7 +32,8 @@ target_link_libraries(PrismTests PRIVATE
     juce::juce_audio_processors
     juce::juce_gui_basics
     juce::juce_audio_basics
-    juce::juce_recommended_config_flags)
+    juce::juce_recommended_config_flags
+    PrismBinaryData)
 
 # 产物放到 build/<preset>/PrismTests，便于直接 ./build/debug/PrismTests。
 set_target_properties(PrismTests PROPERTIES

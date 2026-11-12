@@ -20,6 +20,7 @@
 
 #include <cmath>
 
+#include "BinaryData.h"
 #include "Parameters.h"
 #include "PluginProcessor.h"
 
@@ -44,8 +45,31 @@ const char* const kBandRanges[7] = { "20\xe2\x80\x93" "150",
                                      "8\xe2\x80\x93" "14k",
                                      "14k+" };
 
-void configureKnob (juce::Slider& knob)
+// dvisvgm 把每个字形写成 <use x=... y=...>，而 JUCE 8 的 SVGParser 只解析
+// xlink:href、不读 use 的 x/y（juce_SVGParser.cpp 的 parseUsePath）。
+// 这里把 x/y 折成 transform，交给 parseShape 的变换路径处理。
+void foldUseOffsets (juce::XmlElement& element)
 {
+    if (element.hasTagName ("use"))
+    {
+        const auto x = element.getStringAttribute ("x");
+        const auto y = element.getStringAttribute ("y");
+
+        if (x.isNotEmpty() || y.isNotEmpty())
+        {
+            element.setAttribute ("transform",
+                                  "translate(" + (x.isEmpty() ? juce::String ("0") : x)
+                                      + "," + (y.isEmpty() ? juce::String ("0") : y) + ")");
+            element.removeAttribute ("x");
+            element.removeAttribute ("y");
+        }
+    }
+
+    for (auto* child = element.getFirstChildElement(); child != nullptr; child = child->getNextElement())
+        foldUseOffsets (*child);
+}
+
+void configureKnob (juce::Slider& knob){
     knob.setSliderStyle (juce::Slider::RotaryVerticalDrag);
     knob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 68, 18);
     knob.setColour (juce::Slider::rotarySliderFillColourId, accentColour);
@@ -64,6 +88,21 @@ PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& proce
 {
     setOpaque (true);
     setResizable (false, false);
+
+    // 字标：直接解析 SVG（JUCE 8 SVGParser 支持 <use>），并换成标题色。
+    // 解析失败时只断言、保留空指针，paint() 会跳过绘制。
+    if (auto xml = juce::XmlDocument::parse (
+            juce::String::fromUTF8 (reinterpret_cast<const char*> (BinaryData::logo_svg),
+                                    BinaryData::logo_svgSize)))
+    {
+        foldUseOffsets (*xml);
+        logo = juce::Drawable::createFromSVG (*xml);
+    }
+
+    if (logo != nullptr)
+        logo->replaceColour (juce::Colours::black, titleColour);
+    else
+        jassertfalse;
 
     for (int i = 0; i < kNumKnobs; ++i)
     {
@@ -121,15 +160,30 @@ void PrismAudioProcessorEditor::paint (juce::Graphics& g)
     g.setColour (panelColour);
     g.fillRoundedRectangle (panel, 10.0f);
 
-    auto title = panel.removeFromTop (52.0f).reduced (20.0f, 0.0f);
+    panel.removeFromTop (52.0f);
+
+    // 字标按 17 px 高、原始宽高比缩放，贴在标题行左端；PRISM 从右侧 14 px 起。
+    if (logo != nullptr)
+    {
+        const auto source = logo->getDrawableBounds();
+
+        if (source.getWidth() > 0.0f && source.getHeight() > 0.0f)
+        {
+            const auto scale = logoBounds.getWidth() / source.getWidth();
+            const auto transform = juce::AffineTransform::scale (scale)
+                                       .translated (logoBounds.getX() - source.getX() * scale,
+                                                    logoBounds.getY() - source.getY() * scale);
+            logo->draw (g, 1.0f, transform);
+        }
+    }
 
     g.setColour (titleColour);
     g.setFont (juce::Font (juce::FontOptions { 30.0f, juce::Font::bold }));
-    g.drawText ("PRISM", title, juce::Justification::centredLeft, false);
+    g.drawText ("PRISM", prismTextBounds, juce::Justification::centredLeft, false);
 
     g.setColour (hintColour);
     g.setFont (juce::Font (juce::FontOptions { 12.0f, juce::Font::plain }));
-    g.drawText ("SEVEN-BAND OPTO COMPRESSOR", title, juce::Justification::centredRight, false);
+    g.drawText ("SEVEN-BAND OPTO COMPRESSOR", titleRowBounds, juce::Justification::centredRight, false);
 
     g.setColour (accentColour.withAlpha (0.45f));
     g.fillRect (panel.getX() + 20.0f, panel.getY() + 1.0f, panel.getWidth() - 40.0f, 1.0f);
@@ -207,7 +261,17 @@ void PrismAudioProcessorEditor::drawMeters (juce::Graphics& g) const
 void PrismAudioProcessorEditor::resized()
 {
     auto inner = getLocalBounds().reduced (12);
-    inner.removeFromTop (52);
+    titleRowBounds = inner.removeFromTop (52).reduced (20, 0);
+
+    constexpr float logoHeight = 17.0f;
+    constexpr float logoAspect = 5.646f; // Assets/logo.svg: 73.237 / 12.969
+    const auto logoWidth = logoHeight * logoAspect;
+
+    logoBounds = juce::Rectangle<float> (static_cast<float> (titleRowBounds.getX()),
+                                         static_cast<float> (titleRowBounds.getCentreY()) - logoHeight * 0.5f,
+                                         logoWidth,
+                                         logoHeight);
+    prismTextBounds = titleRowBounds.withTrimmedLeft (juce::roundToInt (logoWidth) + 14);
 
     meterArea = inner.removeFromTop (212).reduced (20, 6);
 

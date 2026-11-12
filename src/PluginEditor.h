@@ -40,6 +40,12 @@ public:
     void paint (juce::Graphics& g) override;
     void resized() override;
 
+    // 只读访问器，供 EditorTests 检查字标嵌入与布局；不参与音频路径。
+    const juce::Drawable* getLogoForTesting() const noexcept { return logo.get(); }
+    juce::Rectangle<float> getLogoBoundsForTesting() const noexcept { return logoBounds; }
+    juce::Rectangle<int> getTitleRowBoundsForTesting() const noexcept { return titleRowBounds; }
+    juce::Rectangle<int> getPrismTextBoundsForTesting() const noexcept { return prismTextBounds; }
+
 private:
     static constexpr int kNumBands = static_cast<int> (prism::kBands.size());
     static constexpr int kNumKnobs = 5;
@@ -57,6 +63,13 @@ private:
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, kNumKnobs> attachments;
 
     juce::Rectangle<int> meterArea;
+
+    // 标题行左侧的 Stargazer 字标（SVG 由 BinaryData 编入）。
+    // 解析失败时保持空指针，paint() 跳过绘制，不崩溃。
+    std::unique_ptr<juce::Drawable> logo;
+    juce::Rectangle<float> logoBounds;
+    juce::Rectangle<int> titleRowBounds;
+    juce::Rectangle<int> prismTextBounds;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PrismAudioProcessorEditor)
 };
