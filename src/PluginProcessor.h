@@ -2,8 +2,12 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <atomic>
+
+#include "dsp/PrismDsp.h"
+
 // PRISM 七段光电压缩器。
-// 当前阶段：5 个参数、状态存取与立体声专一总线已接上；音频仍透传。
+// 5 个参数经 APVTS 读入 PrismDsp；延迟 1152 样本由引擎上报。
 class PrismAudioProcessor final : public juce::AudioProcessor
 {
 public:
@@ -45,6 +49,17 @@ public:
     juce::AudioProcessorValueTreeState apvts;
 
 private:
+    // 参数指针在构造时缓存，音频线程只做 atomic load，不查表、不加锁。
+    void cacheParameterPointers();
+
+    prism::PrismDsp dsp;
+
+    std::atomic<float>* amountParam = nullptr;
+    std::atomic<float>* spectrumParam = nullptr;
+    std::atomic<float>* mixParam = nullptr;
+    std::atomic<float>* inputParam = nullptr;
+    std::atomic<float>* outputParam = nullptr;
+
     double currentSampleRate = 0.0;
     int currentBlockSize = 0;
 

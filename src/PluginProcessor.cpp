@@ -19,21 +19,37 @@ PrismAudioProcessor::PrismAudioProcessor()
     // 状态格式版本；将来改布局时靠它做迁移。
     apvts.state.setProperty (juce::Identifier ("version"), 1, nullptr);
 
-    // 当前仍透传，DSP 接线后改为 prism::PrismDsp::kLatencySamples。
-    setLatencySamples (0);
+    cacheParameterPointers();
+
+    // 延迟与 PrismDsp::kLatencySamples 保持一致（FIR 1024 + overlap-save 块 128）。
+    setLatencySamples (prism::PrismDsp::kLatencySamples);
+}
+
+void PrismAudioProcessor::cacheParameterPointers()
+{
+    amountParam = apvts.getRawParameterValue (prism::parameters::amount);
+    spectrumParam = apvts.getRawParameterValue (prism::parameters::spectrum);
+    mixParam = apvts.getRawParameterValue (prism::parameters::mix);
+    inputParam = apvts.getRawParameterValue (prism::parameters::input);
+    outputParam = apvts.getRawParameterValue (prism::parameters::output);
 }
 
 void PrismAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    if (sampleRate <= 0.0 || samplesPerBlock <= 0)
+        return;
+
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
 
-    // 透传，无内部延迟。
-    setLatencySamples (0);
+    // 采样率或块大小变化时，prepare 内部重建 FIR 系数、时间常数与全部缓冲。
+    dsp.prepare (sampleRate, samplesPerBlock, 2);
+    setLatencySamples (prism::PrismDsp::kLatencySamples);
 }
 
 void PrismAudioProcessor::releaseResources()
 {
+    dsp.reset();
 }
 
 bool PrismAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -50,13 +66,27 @@ void PrismAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 {
     juce::ScopedNoDenormals noDenormals;
 
-    const int numInputChannels = getTotalNumInputChannels();
-    const int numOutputChannels = getTotalNumOutputChannels();
-    const int numSamples = buffer.getNumSamples();
+    // 总线只允许立体声；万一宿主给了别的布局，清空比出声更安全。
+    if (buffer.getNumChannels() != 2)
+    {
+        buffer.clear();
+        return;
+    }
 
-    // 多出来的输出通道清零；输入通道原样保留（透传）。
-    for (int channel = numInputChannels; channel < numOutputChannels; ++channel)
-        buffer.clear (channel, 0, numSamples);
+    if (amountParam == nullptr)
+        return;
+
+    prism::EngineParams params;
+
+    // 参数层是 0..100 % 与 dB，引擎要 0..1 与 dB；逐块读一次，块内由引擎逐样本平滑。
+    params.amount01 = amountParam->load (std::memory_order_relaxed) * 0.01f;
+    params.spectrum = spectrumParam->load (std::memory_order_relaxed) * 0.01f;
+    params.mix01 = mixParam->load (std::memory_order_relaxed) * 0.01f;
+    params.inputDb = inputParam->load (std::memory_order_relaxed);
+    params.outputDb = outputParam->load (std::memory_order_relaxed);
+
+    dsp.setParams (params);
+    dsp.processBlock (buffer);
 
     juce::ignoreUnused (currentSampleRate, currentBlockSize);
 }
