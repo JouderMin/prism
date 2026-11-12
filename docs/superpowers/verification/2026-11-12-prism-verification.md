@@ -575,3 +575,92 @@ dB 均 1 位小数，百分比均 0 位小数，SPECTRUM 正值带 `+`；频段�
 2. 压缩实测 `−5.46 dB` 而非 t14 的 `−6.38 dB`，原因是 1 kHz 落段变化；仍满足 >3 dB，但报告不应继续引用 −6.38。
 3. auval/pluginval 结果来自队长 2026-11-12 21:41–21:45 的外部执行记录，verifier 未复跑；Standalone 启动、宿主加载与听感仍未做。
 4. 未做运行时分配器 hook。
+
+---
+
+## t17b 复验（HEAD 89a504e，README 26→28 后）
+
+- 任务：t17 第 2 次尝试，attempt `5c064923-144d-4093-98f1-a99eb9816613`
+- HEAD：`89a504e70207dc5a21943e74b62af009e0a20d48`（`93bbf06` 之后仅 README 26→28）。
+- 相对 `881d6d6` 的代码差异：只有 `README.md` 与上一段验证记录，`src/`、`tests/` 零差异；仍重新跑了 clean-first 构建与两套测试，裁决绑定本 HEAD。
+
+### 1. 构建与测试
+
+```sh
+cmake --preset debug && cmake --build --preset debug --clean-first
+# exit 0；146 目标；14 warning，全部在 JUCE/vcpkg
+
+cmake --preset release -DPRISM_COPY_PLUGINS=OFF --fresh && cmake --build --preset release --clean-first
+# exit 0；146 目标；14 warning，全部在 JUCE/vcpkg
+```
+
+- debug 的 14 条 warning：`fvariant.h` 2 条（VST3 SDK）、`juce_CGMetalLayerRenderer_mac.h` 12 条；release 同源。`src/`、`tests/` 0 warning。
+- 两套 `PrismTests` 各 **28 条** `Starting tests`、0 `FAILED`、exit 0。
+- 关键实测（debug 与 release 一致）：
+  - 恒等：`1.19209e-7`（< 1e-6）。
+  - 压缩：1 kHz、−6 dBFS，`−5.46 dB`；1 kHz 落段 3（500–1200），不是 t14 的段 4，故不等于 −6.38 dB；仍 >3 dB。
+  - 冲激峰：`1152`，`1.000000`（Dsp / Filterbank / Processor 三条路径）。
+  - 平滑：20 ms `0.993262`；最大相邻差 `0.065263`。
+  - 段 1 @150 Hz：`−6.02 dB`。
+  - 段 2 @40 Hz 泄漏：`−101.35 dB`。
+  - 单段 −6 dB 带外：11 点最大泄漏 `−86.85 dB`（段 2 @75 Hz），偏差均 `±0.000 dB`。
+  - 96 kHz：重建 `2.38e-7`，150 Hz `−5.98 dB`。
+  - 11.025 kHz：重建 `2.24e-7`，延迟 1152，无 jassert。
+  - 90% 恢复：`232.5 / 202.8 / 175.5 / 155.2 / 139.7 / 125.2 / 114.0 ms`。
+
+### 2. 产物
+
+| 产物 | 二进制 | codesign |
+|---|---|---|
+| `build/release/PrismAU_artefacts/Release/AU/PRISM.component` | `Contents/MacOS/PRISM`：Mach-O 64-bit bundle arm64 | exit 0 |
+| `build/release/PrismVST3_artefacts/Release/VST3/PRISM.vst3` | `Contents/MacOS/PRISM`：Mach-O 64-bit bundle arm64 | exit 0 |
+| `build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app` | `Contents/MacOS/PRISM`：Mach-O 64-bit executable arm64 | exit 0 |
+
+```sh
+codesign --verify --deep --strict build/release/PrismAU_artefacts/Release/AU/PRISM.component build/release/PrismVST3_artefacts/Release/VST3/PRISM.vst3 build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app
+# exit 0
+```
+
+AU plist：`type=aufx`、`subtype=Prsm`、`manufacturer=Stgz`、`version=256`、`CFBundleIdentifier=com.stargazer.prism`、`CFBundleShortVersionString=0.1.0`。
+
+### 3. 代码约束
+
+```sh
+grep -rnE '\b(new|delete|malloc|free)\b' src tests | grep -v 'ScopedNoDenormals' | head
+```
+
+只命中 3 条注释，无调用：`src/PluginEditor.h:14`、`src/Parameters.h:78`、`src/PluginProcessor.cpp:96`。分配只在构造/`prepare`/`rebuild`；`processBlock` 路径无分配、无锁、无 IO。`jassert` 共 14 处；`src/dsp/PrismDsp.cpp:141` 与 `src/dsp/Filterbank.cpp:210` 两处 `jassertfalse` 有 release return，其余为 prepare 期前置条件。限制：未做运行时分配器 hook。
+
+### 4. 界面读数
+
+`build/debug/editor-snapshot.png`：720×480、27924 字节。读数为 `37 %`、`+25 %`、`100 %`、`3.7 dB`、`0.0 dB`；dB 1 位小数、百分比整数、SPECTRUM 正值带 `+`。频段标签 `20–150 / 150–500 / 500–1.2k / 1.2–3k / 3–8k / 8–14k / 14k+`。
+
+### 5. 文档一致性
+
+| 检查项 | 结果 | 证据 |
+|---|---|---|
+| 测试条数 | PASS | `README.md:10`、`README.md:105` 已改为 28，与实际一致 |
+| 分频点 | PASS | `README.md:86-92`、`spec:81,170-176`、`plan:22,131` 与 `src/dsp/FirDesign.h:13` 一致 |
+| 读数格式 | PASS | `README.md:79`、`spec:239`；快照与测试一致 |
+| auval/pluginval 表述 | PASS（引用队长记录） | `README.md:11` auval SUCCEEDED、pluginval 1.0.4 严格度 10；`README.md:117` AU 模式限制；本文件 t15 段 |
+| spec/plan 分频与验收 | PASS | `spec:125-132,360`、`plan:22,131` |
+
+### 6. 验收
+
+| # | 条款 | 结果 | 证据 |
+|---|---|---|---|
+| 1 | debug/release 全量构建 exit 0，src/tests 0 warning | PASS | 各 146 目标；14 warning 全在 JUCE/vcpkg |
+| 2 | 两套测试全过，关键数字齐全 | PASS | 各 28 条、0 失败；§1 |
+| 3 | 三产物 arm64、codesign、AU plist | PASS | §2 |
+| 4 | 无裸分配；音频线程零分配；14 处 jassert | PASS | §3；限制：无运行时 hook |
+| 5 | 界面读数格式 | PASS | §4 |
+| 6 | 文档与当前行为一致 | PASS | §5；README 26→28 已修 |
+
+**结论：PASS。** 本裁决绑定 HEAD `89a504e`（代码与 `881d6d6` 相同，README 已修）。
+
+残留/边界：
+
+1. auval/pluginval 来自队长 2026-11-12 21:41–21:45 的外部记录，verifier 未复跑。
+2. Standalone 启动、宿主加载与听感未做。
+3. 未做运行时分配器 hook。
+4. 压缩实测 `−5.46 dB`，不是 t14 的 `−6.38 dB`；原因是 1 kHz 落段 3。
