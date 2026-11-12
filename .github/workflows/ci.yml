@@ -92,3 +92,24 @@ jobs:
       - name: Run tests
         shell: bash
         run: ${{ matrix.test_binary }}
+
+      - name: Upload macOS plugin bundles
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PRISM-macos-arm64
+          path: |
+            build/ci/PrismAU_artefacts/Release/AU/PRISM.component
+            build/ci/PrismVST3_artefacts/Release/VST3/PRISM.vst3
+            build/ci/PrismStandalone_artefacts/Release/Standalone/PRISM.app
+          if-no-files-found: error
+
+      - name: Upload Windows plugin bundles
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PRISM-windows-x64
+          path: |
+            build/ci/PrismVST3_artefacts/Release/VST3/PRISM.vst3
+            build/ci/PrismStandalone_artefacts/Release/Standalone/PRISM.exe
+          if-no-files-found: error
