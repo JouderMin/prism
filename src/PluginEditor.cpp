@@ -222,22 +222,22 @@ PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& proce
         };
     }
 
-    // DELTA：MIX 旋钮中央的圆形监听开关。开时填充标题色、深色 ∆；关时描边。
+    // DELTA：MIX 旋钮中央的圆形监听开关。开时填充强调色、深色 ∆；关时强调色描边。
     deltaButton = std::make_unique<DeltaButton>();
     deltaButton->setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-    deltaButton->setColour (juce::TextButton::buttonOnColourId, titleColour);
-    deltaButton->setColour (juce::TextButton::textColourOffId, titleColour);
+    deltaButton->setColour (juce::TextButton::buttonOnColourId, accentColour);
+    deltaButton->setColour (juce::TextButton::textColourOffId, accentColour);
     deltaButton->setColour (juce::TextButton::textColourOnId, backgroundColour);
     addAndMakeVisible (*deltaButton);
 
     deltaAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         audioProcessor.apvts, prism::parameters::delta, *deltaButton);
 
-    // LINK：INPUT 与 OUTPUT 之间的胶囊开关。开时输出级抵消 INPUT 增益。
+    // LINK：INPUT 与 OUTPUT 之间的胶囊开关。开时强调色填充 + 深色字，关时强调色描边。
     linkButton = std::make_unique<LinkButton>();
     linkButton->setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-    linkButton->setColour (juce::TextButton::buttonOnColourId, titleColour);
-    linkButton->setColour (juce::TextButton::textColourOffId, titleColour);
+    linkButton->setColour (juce::TextButton::buttonOnColourId, accentColour);
+    linkButton->setColour (juce::TextButton::textColourOffId, accentColour);
     linkButton->setColour (juce::TextButton::textColourOnId, backgroundColour);
     addAndMakeVisible (*linkButton);
 
