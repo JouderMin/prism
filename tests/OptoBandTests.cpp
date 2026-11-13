@@ -79,7 +79,10 @@ public:
         : params_ (prism::kBands[static_cast<size_t> (bandIndex)])
     {
         attack_ = 1.0 - std::exp (-1.0 / (0.001 * static_cast<double> (prism::kDetectorAttackMs) * kSampleRate));
-        release_ = 1.0 - std::exp (-1.0 / (0.001 * static_cast<double> (prism::kDetectorReleaseMs) * kSampleRate));
+        releaseFast_ = 1.0 - std::exp (-1.0 / (0.001 * static_cast<double> (params_.releaseFastMs) * kSampleRate));
+        releaseTail_ = 1.0 - std::exp (-1.0 / (0.001 * static_cast<double> (params_.releaseTailMs) * kSampleRate));
+        peakHoldDecay_ = std::pow (10.0, -static_cast<double> (prism::kPeakHoldDecayDbPerSecond)
+                                             / (20.0 * kSampleRate));
         follow_ = 1.0 - std::exp (-1.0 / (static_cast<double> (params_.tauLdrSeconds) * kSampleRate));
         driveGain_ = std::pow (10.0, static_cast<double> (driveDb) / 20.0);
         sensitivity_ = std::pow (10.0, static_cast<double> (params_.sensitivityDb) / 20.0);
@@ -88,8 +91,24 @@ public:
     void process (float x)
     {
         const auto rectified = std::abs (static_cast<double> (x));
-        const auto coefficient = rectified > env_ ? attack_ : release_;
-        env_ += coefficient * (rectified - env_);
+        const auto threshold = std::pow (10.0, -static_cast<double> (prism::kPeakHoldReleaseRangeDb) / 20.0);
+        if (rectified > env_)
+        {
+            env_ += attack_ * (rectified - env_);
+            tailLatched_ = false;
+        }
+        else
+        {
+            if (env_ <= peakHold_ * threshold)
+                tailLatched_ = true;
+
+            env_ += (tailLatched_ ? releaseTail_ : releaseFast_) * (rectified - env_);
+        }
+
+        if (env_ > peakHold_)
+            peakHold_ = env_;
+        else if (tailLatched_)
+            peakHold_ *= peakHoldDecay_;
 
         const auto ratio = std::max (env_ / static_cast<double> (prism::kReferenceLevel), 0.0);
         const auto shaped = std::pow (ratio, static_cast<double> (prism::kLightExponent));
@@ -111,7 +130,11 @@ public:
 private:
     prism::BandParams params_;
     double attack_ = 0.0;
-    double release_ = 0.0;
+    double releaseFast_ = 0.0;
+    double releaseTail_ = 0.0;
+    double peakHoldDecay_ = 1.0;
+    bool tailLatched_ = false;
+    double peakHold_ = 0.0;
     double follow_ = 0.0;
     double driveGain_ = 1.0;
     double sensitivity_ = 1.0;
@@ -132,6 +155,7 @@ public:
         testStaticSlope();
         testReleaseLinearity();
         testNinetyPercentRecovery();
+        testDualReleaseShape();
         testSilenceAndTinyInput();
         testGainRange();
         testDetectorTimeConstants();
@@ -279,8 +303,103 @@ private:
                         + juce::String (recoveryMs, 1) + " ms (gain "
                         + juce::String (settled6Db, 2) + " -> " + juce::String (settled18Db, 2) + " dB)");
 
-            expectGreaterThan (recoveryMs, 0.0);
+            // spec 5.4 实测值；12 dB 阶跃的 90% 点在 12 dB 门限之前，
+            // 因此仍由 60 ms 快段主导，双段尾段只影响最后不到 10%。
+            constexpr std::array<double, 7> kExpectedRecoveryMs {
+                232.5, 202.8, 175.5, 155.2, 139.7, 125.2, 114.0
+            };
+
+            expectWithinAbsoluteError (recoveryMs,
+                                       kExpectedRecoveryMs[static_cast<size_t> (b)],
+                                       15.0);
             expectLessThan (recoveryMs, 2500.0);
+        }
+    }
+
+    void testDualReleaseShape()
+    {
+        beginTest ("dual release: 60 ms fast stage then 600 ms tail");
+
+        constexpr auto targetLevel = 0.125f; // -18 dBFS
+
+        for (int b = 0; b < static_cast<int> (prism::kBands.size()); ++b)
+        {
+            prism::OptoBand band (b);
+            band.prepare (kSampleRate);
+            band.setDrive (0.0f);
+
+            // 先让包络稳定在 0.5（约 -6 dBFS），再阶跃到 0.125（约 -18 dBFS）。
+            for (int i = 0; i < 24000; ++i)
+                band.processSample (0.5f);
+
+            const auto initial = band.currentEnvelope();
+            expectGreaterThan (initial, 0.4f);
+
+            // 快段 63% 点是相对阶跃目标计算的：target + 0.368·(initial − target)。
+            const auto fastTarget = targetLevel + 0.36787945f * (initial - targetLevel);
+            const auto twelveDbTarget = initial * 0.25118864f; // 10^(-12/20)
+            auto fastSamples = -1;
+            auto twelveDbSamples = -1;
+            auto switchSamples = -1;
+            auto envelopeAtSwitch = 0.0f;
+
+            for (int i = 0; i < 48000; ++i)
+            {
+                band.processSample (targetLevel);
+
+                const auto envelope = band.currentEnvelope();
+
+                if (fastSamples < 0 && envelope <= fastTarget)
+                    fastSamples = i + 1;
+
+                if (envelope <= twelveDbTarget)
+                {
+                    twelveDbSamples = i + 1;
+                    switchSamples = i + 1;
+                    envelopeAtSwitch = envelope;
+                    break;
+                }
+            }
+
+            expectGreaterThan (fastSamples, 0);
+            expectGreaterThan (twelveDbSamples, 0);
+            expectGreaterThan (switchSamples, 0);
+
+            // 从切换点测尾段到 63.2% 剩余量的时间。
+            const auto tailTarget = targetLevel + 0.368f * (envelopeAtSwitch - targetLevel);
+            auto tailSamples = -1;
+
+            if (switchSamples > 0)
+            {
+                for (int i = switchSamples; i < 96000; ++i)
+                {
+                    band.processSample (targetLevel);
+
+                    if (band.currentEnvelope() <= tailTarget)
+                    {
+                        tailSamples = i + 1 - switchSamples;
+                        break;
+                    }
+                }
+            }
+
+            expectGreaterThan (tailSamples, 0);
+
+            const auto fastMs = 1000.0 * static_cast<double> (fastSamples) / kSampleRate;
+            const auto twelveDbMs = 1000.0 * static_cast<double> (twelveDbSamples) / kSampleRate;
+            const auto tailMs = tailSamples > 0
+                                  ? 1000.0 * static_cast<double> (tailSamples) / kSampleRate
+                                  : -1.0;
+
+            logMessage ("band " + juce::String (b + 1)
+                        + " fast63 = " + juce::String (fastMs, 2)
+                        + " ms, 12 dB = " + juce::String (twelveDbMs, 2)
+                        + " ms, tail63 = " + juce::String (tailMs, 2) + " ms");
+
+            expectWithinAbsoluteError (fastMs, 60.0, 15.0);
+            expectGreaterThan (twelveDbMs, 300.0);
+            expectLessThan (twelveDbMs, 500.0);
+            expectWithinAbsoluteError (tailMs, 600.0, 150.0);
         }
     }
 

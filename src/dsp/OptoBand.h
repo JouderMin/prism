@@ -29,7 +29,8 @@ namespace prism
 
     每样本处理，无分配、无锁、无 I/O。所有状态在构造与 prepare 中确定。
 
-    检测器：整流后一阶包络，attack 10 ms、release 60 ms（固定）。
+    检测器：整流后一阶包络，attack 10 ms；释放按程序相关双段，峰值 12 dB
+    内 60 ms、跌出后 600 ms；peakHold 在快段保持峰值，进尾段后以 6 dB/s 慢衰减。
     光强：d = A · s_b · (env / ref)^1.6，ref = −18 dBFS，A = 10^(drive/20)。
     光敏电阻：R = R_dark / (1 + (d/d0)^γ)，按段 τ_ldr 一阶跟随。
     增益：g = (R_s + R)/(R_s + R_dark)，夹到 [g_min, 1]。
@@ -64,6 +65,9 @@ public:
     /** 当前整流包络，供检测器时间常数测试与诊断用。 */
     float currentEnvelope() const noexcept { return env_; }
 
+    /** 当前慢衰减峰值，供双时间常数测试与诊断用。 */
+    float currentPeakHold() const noexcept { return peakHold_; }
+
     int bandIndex() const noexcept { return bandIndex_; }
 
 private:
@@ -75,6 +79,9 @@ private:
     double sampleRate_ = 48000.0;
     float attackCoef_ = 0.0f;
     float releaseCoef_ = 0.0f;
+    float releaseTailCoef_ = 0.0f;
+    float peakHoldDecay_ = 0.0f;
+    bool tailLatched_ = false;
     float ldrFollow_ = 0.0f;
     float driveGain_ = 1.0f;
     float sensitivityGain_ = 1.0f;
@@ -88,6 +95,7 @@ private:
     std::array<float, 4> lightChunkGain_ { 1.0f, 1.0f, 1.0f, 1.0f };
 
     float env_ = 0.0f;
+    float peakHold_ = 0.0f;
     float ldr_ = kDarkResistanceOhm;
     float gain_ = 1.0f;
     float lightIntensity_ = 0.0f;

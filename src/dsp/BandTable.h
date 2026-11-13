@@ -68,8 +68,8 @@ struct BandParams
     std::uint32_t colorArgb;
     int wavelengthNm;
     float tauLdrSeconds;
-    // 设计目标，不是当前实现的独立时间常数：实际释放形状 = 检测器 60 ms
-    // 与 τ_ldr 一阶跟随叠加；这两个字段留作 M4 双时间常数释放的设计参考。
+    // 检测器程序相关释放：峰值 12 dB 内用快段，之后切尾段。两段都由
+    // OptoBand::prepare 读取，再与 τ_ldr 的一阶跟随叠加成最终释放形状。
     float releaseFastMs;
     float releaseTailMs;
     float gamma;
@@ -77,9 +77,17 @@ struct BandParams
     float sensitivityDb;
 };
 
-/** 检测器固定时间常数（spec 5.3）。 */
+/** 检测器时间常数（spec 5.3 / M4）：attack 10 ms，释放快段 60 ms、尾段 600 ms。
+    实际每段长度从 BandParams::releaseFastMs / releaseTailMs 读取；这里保留默认值。 */
 inline constexpr float kDetectorAttackMs = 10.0f;
 inline constexpr float kDetectorReleaseMs = 60.0f;
+inline constexpr float kDetectorTailReleaseMs = 600.0f;
+
+/** 双时间常数切换：包络进入峰值下方 12 dB 后从快段切到尾段。 */
+inline constexpr float kPeakHoldReleaseRangeDb = 12.0f;
+
+/** peakHold 的慢衰减速度，6 dB/s。 */
+inline constexpr float kPeakHoldDecayDbPerSecond = 6.0f;
 
 /** 光强与光敏电阻的固定常量（spec 5.3）。 */
 inline constexpr float kReferenceDbfs = -18.0f;
@@ -90,13 +98,13 @@ inline constexpr float kSeriesResistanceOhm = 10.0e3f;
 inline constexpr float kMinGain = kSeriesResistanceOhm / (kSeriesResistanceOhm + kDarkResistanceOhm);
 
 inline constexpr std::array<BandParams, 7> kBands = { {
-    { "red", 0xffe05a4f, 700, 0.080f, 120.0f, 2500.0f, 0.90f, 1.5f, -18.14f },
-    { "orange", 0xffe8913a, 620, 0.065f, 100.0f, 1800.0f, 0.95f, 1.8f, -14.33f },
-    { "yellow", 0xffe3c34a, 580, 0.050f, 90.0f, 1400.0f, 1.00f, 2.0f, -13.05f },
-    { "green", 0xff5fbf7a, 530, 0.038f, 75.0f, 1000.0f, 1.05f, 2.2f, -12.22f },
-    { "cyan", 0xff4fbfc4, 500, 0.028f, 60.0f, 700.0f, 1.10f, 2.5f, -11.26f },
-    { "blue", 0xff5a7fd6, 470, 0.018f, 45.0f, 500.0f, 1.15f, 2.8f, -10.72f },
-    { "violet", 0xffa06bd6, 420, 0.010f, 30.0f, 350.0f, 1.20f, 3.0f, -10.67f },
+    { "red", 0xffe05a4f, 700, 0.080f, 60.0f, 600.0f, 0.90f, 1.5f, -18.14f },
+    { "orange", 0xffe8913a, 620, 0.065f, 60.0f, 600.0f, 0.95f, 1.8f, -14.33f },
+    { "yellow", 0xffe3c34a, 580, 0.050f, 60.0f, 600.0f, 1.00f, 2.0f, -13.05f },
+    { "green", 0xff5fbf7a, 530, 0.038f, 60.0f, 600.0f, 1.05f, 2.2f, -12.22f },
+    { "cyan", 0xff4fbfc4, 500, 0.028f, 60.0f, 600.0f, 1.10f, 2.5f, -11.26f },
+    { "blue", 0xff5a7fd6, 470, 0.018f, 60.0f, 600.0f, 1.15f, 2.8f, -10.72f },
+    { "violet", 0xffa06bd6, 420, 0.010f, 60.0f, 600.0f, 1.20f, 3.0f, -10.67f },
 } };
 
 static_assert (kBands.size() == 7, "spec 5.4 固定 7 段");

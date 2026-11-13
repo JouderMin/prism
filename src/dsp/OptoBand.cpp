@@ -27,8 +27,11 @@ namespace prism
 namespace
 {
 constexpr double kAttackSeconds = 0.001 * static_cast<double> (kDetectorAttackMs);
-constexpr double kReleaseSeconds = 0.001 * static_cast<double> (kDetectorReleaseMs);
 constexpr float kLightFloor = 1.0e-12f;
+
+// 峰值下方 12 dB 内走快段；跨过这个门限后切到尾段。
+const float kPeakHoldThreshold = static_cast<float> (
+    std::pow (10.0, -static_cast<double> (kPeakHoldReleaseRangeDb) / 20.0));
 
 constexpr float kLog2PerDb = 0.16609640474436813f; // log2(10) / 20
 constexpr float kLog2Reference = -2.9897356f;      // log2(kReferenceLevel)
@@ -78,8 +81,14 @@ void OptoBand::prepare (double sampleRate)
     sampleRate_ = sampleRate;
 
     // 一阶插值权重：env += (1 − exp(−1/(τ·fs)))·(x − env)，τ 秒到 63%。
+    // 释放的两段长度来自 BandParams，M4 起真正参与音频路径。
     attackCoef_ = static_cast<float> (1.0 - std::exp (-1.0 / (kAttackSeconds * sampleRate_)));
-    releaseCoef_ = static_cast<float> (1.0 - std::exp (-1.0 / (kReleaseSeconds * sampleRate_)));
+    releaseCoef_ = static_cast<float> (1.0 - std::exp (
+        -1.0 / (0.001 * static_cast<double> (params_.releaseFastMs) * sampleRate_)));
+    releaseTailCoef_ = static_cast<float> (1.0 - std::exp (
+        -1.0 / (0.001 * static_cast<double> (params_.releaseTailMs) * sampleRate_)));
+    peakHoldDecay_ = static_cast<float> (
+        std::pow (10.0, -static_cast<double> (kPeakHoldDecayDbPerSecond) / (20.0 * sampleRate_)));
     ldrFollow_ = static_cast<float> (1.0 - std::exp (-1.0 / (static_cast<double> (params_.tauLdrSeconds) * sampleRate_)));
 
     sensitivityGain_ = static_cast<float> (std::pow (10.0, static_cast<double> (params_.sensitivityDb) / 20.0));
@@ -126,6 +135,8 @@ void OptoBand::rebuildTables()
 void OptoBand::reset()
 {
     env_ = 0.0f;
+    peakHold_ = 0.0f;
+    tailLatched_ = false;
     ldr_ = kDarkResistanceOhm;
     gain_ = 1.0f;
     lightIntensity_ = 0.0f;
@@ -141,9 +152,34 @@ void OptoBand::setDrive (float driveDb)
 float OptoBand::processSample (float x) noexcept
 {
     // 1) 整流后一阶包络：带内输入直接进检测器（前馈）。
+    //    释放是程序相关的：峰值 12 dB 内用快段，掉出窗口后用长尾。
     const auto rectified = std::abs (x);
-    const auto coef = rectified > env_ ? attackCoef_ : releaseCoef_;
-    env_ += coef * (rectified - env_);
+
+    if (rectified > env_)
+    {
+        env_ += attackCoef_ * (rectified - env_);
+        tailLatched_ = false;
+    }
+    else
+    {
+        // 一旦跌出峰值下方 12 dB 就锁存到尾段，避免门限附近来回抖动。
+        if (env_ <= peakHold_ * kPeakHoldThreshold)
+            tailLatched_ = true;
+
+        const auto release = tailLatched_ ? releaseTailCoef_ : releaseCoef_;
+        env_ += release * (rectified - env_);
+    }
+
+    // peakHold 只负责选择释放段：跟随包络上升，下降按 6 dB/s。
+    if (env_ > peakHold_)
+    {
+        peakHold_ = env_;
+    }
+    else if (tailLatched_)
+    {
+        // 进入尾段后 peakHold 才按 6 dB/s 慢衰减；快段期间保持峰值。
+        peakHold_ *= peakHoldDecay_;
+    }
 
     // 2) 光强：EL 面板的陡峭亮度曲线。log2 只用位运算与级数近似，曲线值查表。
     const auto log2Ratio = fastLog2 (env_) - kLog2Reference;
