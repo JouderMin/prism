@@ -48,6 +48,13 @@ public:
     juce::Rectangle<int> getPrismTextBoundsForTesting() const noexcept { return prismTextBounds; }
     juce::TextButton* getDeltaButtonForTesting() const noexcept { return deltaButton.get(); }
     juce::TextButton* getLinkButtonForTesting() const noexcept { return linkButton.get(); }
+    juce::Label* getKnobLabelForTesting (int index) const noexcept
+    {
+        if (index < 0 || index >= kNumKnobs)
+            return nullptr;
+
+        return knobLabels[static_cast<size_t> (index)].get();
+    }
 
 private:
     static constexpr int kNumBands = static_cast<int> (prism::kBands.size());
@@ -63,7 +70,7 @@ private:
         bool hitTest (int x, int y) override;
     };
 
-    // INPUT/OUTPUT 之间的胶囊 LINK 开关。
+    // INPUT/OUTPUT 标签之间的锁链 LINK 开关。
     class LinkButton final : public juce::TextButton
     {
     public:

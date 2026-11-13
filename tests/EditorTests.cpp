@@ -113,25 +113,50 @@ public:
                             "DELTA must no longer live in the title row");
             }
 
-            if (linkButton != nullptr && inputKnob != nullptr && outputKnob != nullptr)
+            if (linkButton != nullptr)
             {
                 expect (! linkButton->getToggleState());
                 expect (linkButton->isVisible());
 
                 const auto linkBounds = linkButton->getBounds();
-                const auto inputRight = inputKnob->getBounds().getRight();
-                const auto outputLeft = outputKnob->getBounds().getX();
-                const auto gapMidpoint = 0.5 * static_cast<double> (inputRight + outputLeft);
+                expect (linkBounds.getWidth() <= 26,
+                        "LINK must not be the old vertical capsule");
+                expect (linkBounds.getHeight() <= 26,
+                        "LINK must not be the old vertical capsule");
 
-                expect (linkBounds.getX() >= inputRight + 3,
-                        "LINK must clear the INPUT knob by at least 3 px");
-                expect (linkBounds.getRight() <= outputLeft - 3,
-                        "LINK must clear the OUTPUT knob by at least 3 px");
-                expectWithinAbsoluteError (static_cast<double> (linkBounds.getCentreX()),
-                                           gapMidpoint, 2.0);
-                expectGreaterThan (linkBounds.getHeight(), linkBounds.getWidth());
+                if (auto* typed = dynamic_cast<PrismAudioProcessorEditor*> (editor.get()))
+                {
+                    auto* inputLabel = typed->getKnobLabelForTesting (3);
+                    auto* outputLabel = typed->getKnobLabelForTesting (4);
 
-                logMessage ("LINK bounds: " + linkBounds.toString());
+                    expect (inputLabel != nullptr);
+                    expect (outputLabel != nullptr);
+
+                    if (inputLabel != nullptr && outputLabel != nullptr)
+                    {
+                        const auto inputBounds = inputLabel->getBounds();
+                        const auto outputBounds = outputLabel->getBounds();
+                        const auto gapMidpoint = 0.5 * static_cast<double> (
+                            inputBounds.getRight() + outputBounds.getX());
+
+                        expect (linkBounds.getX() >= inputBounds.getRight(),
+                                "LINK must sit right of the INPUT label");
+                        expect (linkBounds.getRight() <= outputBounds.getX(),
+                                "LINK must sit left of the OUTPUT label");
+                        expectWithinAbsoluteError (
+                            static_cast<double> (linkBounds.getCentreX()),
+                            gapMidpoint, 2.0);
+                        expect (linkBounds.getCentreY() >= inputBounds.getY()
+                                    && linkBounds.getCentreY() <= inputBounds.getBottom(),
+                                "LINK must be vertically centred in the label row");
+
+                        logMessage ("LINK bounds: " + linkBounds.toString()
+                                    + "; INPUT label: " + inputBounds.toString()
+                                    + "; OUTPUT label: " + outputBounds.toString()
+                                    + "; label gap: "
+                                    + juce::String (outputBounds.getX() - inputBounds.getRight()));
+                    }
+                }
             }
 
             if (amountKnob != nullptr && spectrumKnob != nullptr && mixKnob != nullptr

@@ -131,7 +131,7 @@ PrismAudioProcessorEditor::LinkButton::LinkButton()
     : juce::TextButton ("LINK")
 {
     setName ("Link");
-    setTooltip ("Link OUTPUT to INPUT level");
+    setTooltip ("Link input and output gains");
     setClickingTogglesState (true);
 }
 
@@ -139,32 +139,42 @@ void PrismAudioProcessorEditor::LinkButton::paintButton (juce::Graphics& g,
                                                          bool shouldDrawButtonAsHighlighted,
                                                          bool)
 {
-    const auto bounds = getLocalBounds().toFloat().reduced (0.5f);
+    // 两个 45° 斜置的圆角矩形环，沿长轴错开 9 px（环长 11 px，咬合 2 px）。
+    const auto centre = getLocalBounds().toFloat().getCentre();
     const auto on = getToggleState();
+    constexpr float ringWidth = 5.0f;
+    constexpr float ringLength = 11.0f;
+    constexpr float axisOffset = 4.5f;
+    constexpr float diagonal = 0.70710678f;
 
-    if (on)
-    {
-        g.setColour (findColour (juce::TextButton::buttonOnColourId));
-        g.fillRoundedRectangle (bounds, 8.0f);
-    }
-    else
-    {
-        g.setColour (findColour (juce::TextButton::buttonColourId));
-        g.fillRoundedRectangle (bounds, 8.0f);
-        g.setColour (findColour (juce::TextButton::textColourOffId)
-                         .withAlpha (shouldDrawButtonAsHighlighted ? 1.0f : 0.85f));
-        g.drawRoundedRectangle (bounds, 8.0f, 1.2f);
-    }
+    const auto strokeColour = on
+        ? findColour (juce::TextButton::buttonOnColourId)
+        : findColour (juce::TextButton::textColourOffId)
+              .withAlpha (shouldDrawButtonAsHighlighted ? 1.0f : 0.85f);
 
-    // 只旋转文字；命中区与裁剪仍由整块按钮 bounds 决定。
-    juce::Graphics::ScopedSaveState saved (g);
-    g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi,
-                                                     bounds.getCentreX(),
-                                                     bounds.getCentreY()));
-    g.setColour (on ? findColour (juce::TextButton::textColourOnId)
-                    : findColour (juce::TextButton::textColourOffId));
-    g.setFont (juce::Font (juce::FontOptions { 9.0f, juce::Font::bold }));
-    g.drawText ("LINK", bounds.toNearestInt(), juce::Justification::centred, false);
+    for (int i = 0; i < 2; ++i)
+    {
+        const auto offset = (i == 0 ? -axisOffset : axisOffset);
+        const auto dx = offset * diagonal;
+
+        juce::Path ring;
+        ring.addRoundedRectangle (-ringWidth * 0.5f, -ringLength * 0.5f,
+                                  ringWidth, ringLength, ringWidth * 0.5f);
+        ring.applyTransform (juce::AffineTransform::rotation (
+                                 juce::MathConstants<float>::pi * 0.25f)
+                                 .translated (centre.x + dx, centre.y + dx));
+
+        if (on)
+        {
+            g.setColour (strokeColour.withAlpha (0.20f));
+            g.fillPath (ring);
+        }
+
+        g.setColour (strokeColour);
+        g.strokePath (ring, juce::PathStrokeType (1.8f,
+                                                  juce::PathStrokeType::curved,
+                                                  juce::PathStrokeType::rounded));
+    }
 }
 
 PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& processorToEdit)
@@ -242,8 +252,7 @@ PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& proce
     linkButton = std::make_unique<LinkButton>();
     linkButton->setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
     linkButton->setColour (juce::TextButton::buttonOnColourId, accentColour);
-    linkButton->setColour (juce::TextButton::textColourOffId, accentColour);
-    linkButton->setColour (juce::TextButton::textColourOnId, backgroundColour);
+    linkButton->setColour (juce::TextButton::textColourOffId, hintColour);
     addAndMakeVisible (*linkButton);
 
     linkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
@@ -403,17 +412,17 @@ void PrismAudioProcessorEditor::resized()
                                           knobRow.getHeight())
                         .reduced (4, 0);
 
-        knobLabels[static_cast<size_t> (i)]->setBounds (cell.removeFromTop (18));
+        // 标签两侧各收 20 px，为 INPUT/OUTPUT 之间的锁链图标留出空隙；文字仍居中。
+        knobLabels[static_cast<size_t> (i)]->setBounds (cell.removeFromTop (18).reduced (20, 0));
         knobs[static_cast<size_t> (i)]->setBounds (cell.withSizeKeepingCentre (108, 140));
     }
 
-    // 竖向 LINK 胶囊居中于 INPUT 右缘与 OUTPUT 左缘之间，命中区就是整钮。
-    const auto linkLeft = knobs[3]->getBounds().getRight();
-    const auto linkRight = knobs[4]->getBounds().getX();
-    const auto rotaryCentreY = knobs[3]->getBounds().withTrimmedBottom (18).getCentreY();
-    linkButton->setBounds (juce::Rectangle<int> (16, 52)
-                               .withCentre ({ (linkLeft + linkRight) / 2,
-                                              rotaryCentreY }));
+    // 锁链图标位于 INPUT/OUTPUT 标签之间，垂直与标签文字居中；命中区 24×24。
+    const auto inputLabel = knobLabels[3]->getBounds();
+    const auto outputLabel = knobLabels[4]->getBounds();
+    linkButton->setBounds (juce::Rectangle<int> (24, 24)
+                               .withCentre ({ (inputLabel.getRight() + outputLabel.getX()) / 2,
+                                              inputLabel.getCentreY() }));
 
     const auto mixRotary = knobs[2]->getBounds().withTrimmedBottom (18);
     deltaButton->setBounds (juce::Rectangle<int> (32, 32).withCentre (mixRotary.getCentre()));
