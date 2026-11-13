@@ -257,9 +257,89 @@ public:
     }
 
 private:
+    /** 对照 JUCE 参考实现，锁定 RealFft 的频谱布局与逆变换归一化。
+
+        RealFft 把 pffft 的 ordered 输出展开成 JUCE 的完整复数谱（DC 在
+        bin 0、Nyquist 在 bin size/2、负频率共轭）；这里用冲激、单 bin
+        余弦/正弦和一次往返变换同时验证布局、符号与 1/N 缩放。
+    */
+    void verifyRealFftLayout()
+    {
+        constexpr int fftSize = 4096;
+        constexpr int fftOrder = 12;
+
+        juce::dsp::FFT reference (fftOrder);
+        prism::RealFft backend (fftSize);
+
+        std::vector<float> expected (static_cast<size_t> (fftSize) * 2, 0.0f);
+        std::vector<float> actual (static_cast<size_t> (fftSize) * 2, 0.0f);
+
+        // 冲激：DC 与 Nyquist 都应为 1，其余 bin 为 0。
+        expected[0] = 1.0f;
+        actual[0] = 1.0f;
+        reference.performRealOnlyForwardTransform (expected.data(), false);
+        backend.forwardReal (actual.data());
+
+        for (int i = 0; i < fftSize * 2; ++i)
+            expectWithinAbsoluteError (actual[static_cast<size_t> (i)],
+                                       expected[static_cast<size_t> (i)], 1.0e-5f);
+
+        // 单 bin 余弦：只在 [2k] 出现 N/2，验证交错顺序。
+        std::fill (expected.begin(), expected.end(), 0.0f);
+        std::fill (actual.begin(), actual.end(), 0.0f);
+
+        constexpr int bin = 5;
+
+        for (int n = 0; n < fftSize; ++n)
+        {
+            const auto value = static_cast<float> (
+                std::cos (juce::MathConstants<double>::twoPi * bin * n / fftSize));
+            expected[static_cast<size_t> (n)] = value;
+            actual[static_cast<size_t> (n)] = value;
+        }
+
+        reference.performRealOnlyForwardTransform (expected.data(), false);
+        backend.forwardReal (actual.data());
+
+        for (int i = 0; i < fftSize * 2; ++i)
+            expectWithinAbsoluteError (actual[static_cast<size_t> (i)],
+                                       expected[static_cast<size_t> (i)], 0.05f);
+
+        // 单 bin 正弦：虚部为 −N/2，验证虚部位置与符号。
+        std::fill (expected.begin(), expected.end(), 0.0f);
+        std::fill (actual.begin(), actual.end(), 0.0f);
+
+        for (int n = 0; n < fftSize; ++n)
+        {
+            const auto value = static_cast<float> (
+                std::sin (juce::MathConstants<double>::twoPi * bin * n / fftSize));
+            expected[static_cast<size_t> (n)] = value;
+            actual[static_cast<size_t> (n)] = value;
+        }
+
+        reference.performRealOnlyForwardTransform (expected.data(), false);
+        backend.forwardReal (actual.data());
+
+        for (int i = 0; i < fftSize * 2; ++i)
+            expectWithinAbsoluteError (actual[static_cast<size_t> (i)],
+                                       expected[static_cast<size_t> (i)], 0.05f);
+
+        // 逆变换：同一频谱分别经 JUCE 与后端还原，比较时域结果。
+        reference.performRealOnlyInverseTransform (expected.data());
+        backend.inverseReal (actual.data());
+
+        for (int i = 0; i < fftSize; ++i)
+            expectWithinAbsoluteError (actual[static_cast<size_t> (i)],
+                                       expected[static_cast<size_t> (i)], 1.0e-4f);
+
+        logMessage ("RealFft layout and 1/N inverse scaling match JUCE");
+    }
+
     void testReconstructionAndDesign()
     {
         beginTest ("reconstruction: 6 bands + rebuilt band 7 sum to input after latency");
+
+        verifyRealFftLayout();
 
         constexpr double sampleRate = 48000.0;
         constexpr int numSamples = 8192;

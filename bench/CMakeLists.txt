@@ -20,7 +20,8 @@ prism_set_warnings(PrismBench)
 target_link_libraries(PrismBench PRIVATE
     juce::juce_dsp
     juce::juce_audio_basics
-    juce::juce_recommended_config_flags)
+    juce::juce_recommended_config_flags
+    PrismFftBackend)
 
 # 产物放到 build/<preset>/PrismBench，便于直接 ./build/release/PrismBench。
 set_target_properties(PrismBench PROPERTIES

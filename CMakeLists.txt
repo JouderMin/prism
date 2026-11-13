@@ -18,6 +18,14 @@ option(PRISM_COPY_PLUGINS "Build 后把插件拷进 ~/Library/Audio/Plug-Ins" OF
 # AU 只有 Apple 平台可用；Windows CI 显式关掉，只构建 VST3 与 Standalone。
 option(PRISM_BUILD_AU "构建 AU 目标（仅 macOS）" ON)
 
+# FFT 后端：默认 juce（vDSP / JUCE fallback），pffft 为可选的 vendored 实现。
+set(PRISM_FFT_BACKEND "juce" CACHE STRING "FFT 后端：juce 或 pffft")
+set_property(CACHE PRISM_FFT_BACKEND PROPERTY STRINGS juce pffft)
+
+if(NOT PRISM_FFT_BACKEND STREQUAL "juce" AND NOT PRISM_FFT_BACKEND STREQUAL "pffft")
+    message(FATAL_ERROR "PRISM_FFT_BACKEND 必须是 juce 或 pffft，当前为 ${PRISM_FFT_BACKEND}")
+endif()
+
 # 插件与测试共用同一套警告；MSVC 不认识 -Wextra/-Wpedantic 等 GCC 选项。
 function(prism_set_warnings target)
     if(MSVC)
@@ -42,6 +50,34 @@ if(NOT JUCE_FOUND)
             "找不到 JUCE。先 `vcpkg install juce --triplet arm64-osx`，"
             "或把 JUCE 8.0.7 放到 third_party/JUCE（见 third_party/README.md）。")
     endif()
+endif()
+
+# ---- FFT 后端 -------------------------------------------------------------
+# 消费方统一链接 PrismFftBackend；juce 时它为空接口，pffft 时带上
+# vendored 静态库、头文件路径与 PRISM_USE_PFFFT 定义。
+add_library(PrismFftBackend INTERFACE)
+
+if(PRISM_FFT_BACKEND STREQUAL "pffft")
+    add_library(PrismPffft STATIC
+        third_party/pffft/src/pffft.c
+        third_party/pffft/src/pffft_common.c)
+
+    target_include_directories(PrismPffft PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pffft/include")
+
+    target_include_directories(PrismPffft PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pffft/src")
+
+    # 静态链接：Windows 上避免 PFFFT_EXPORT 展开成 dllimport。
+    target_compile_definitions(PrismPffft PUBLIC
+        PFFFT_STATIC_DEFINE
+        PRISM_USE_PFFFT=1)
+
+    set_target_properties(PrismPffft PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+
+    # vendored C 源码保持上游原样，不套 PRISM 的严格警告集。
+    target_link_libraries(PrismFftBackend INTERFACE PrismPffft)
 endif()
 
 # ---- 静态资源 -------------------------------------------------------------
@@ -96,7 +132,8 @@ function(prism_add_plugin target kind sign_mode)
         juce::juce_gui_basics
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
-        PrismBinaryData)
+        PrismBinaryData
+        PrismFftBackend)
 
     # Ad-hoc 签名；AU 需要 --deep（spec 8.4）。Windows 没有 codesign。
     if(APPLE)

@@ -42,20 +42,10 @@ int Filterbank::fftSizeFor (int taps) noexcept
     return nextPowerOfTwo (taps + kBlockSize - 1);
 }
 
-int Filterbank::fftOrderFor (int fftSize) noexcept
-{
-    auto order = 0;
-
-    while ((1 << order) < fftSize)
-        ++order;
-
-    return order;
-}
-
 Filterbank::Filterbank (int taps)
     : taps_ (taps),
       fftSize_ (fftSizeFor (taps)),
-      fft_ (fftOrderFor (fftSize_))
+      fft_ (fftSize_)
 {
     jassert (taps_ >= 3 && (taps_ % 2) == 1);
     jassert (fftSize_ >= taps_ + kBlockSize - 1);
@@ -152,7 +142,7 @@ void Filterbank::rebuild()
                    coefficients[static_cast<size_t> (b)].end(),
                    work_.begin());
 
-        fft_.performRealOnlyForwardTransform (work_.data(), false);
+        fft_.forwardReal (work_.data());
 
         bandSpectra_[static_cast<size_t> (b)] = work_;
     }
@@ -171,7 +161,7 @@ void Filterbank::processHop (int channel)
     std::fill (work_.begin(), work_.end(), 0.0f);
     std::copy (history.begin(), history.end(), work_.begin());
 
-    fft_.performRealOnlyForwardTransform (work_.data(), false);
+    fft_.forwardReal (work_.data());
 
     for (int b = 0; b < kNumOutputBands; ++b)
     {
@@ -188,7 +178,7 @@ void Filterbank::processHop (int channel)
             product_[static_cast<size_t> (2 * i + 1)] = ar * bi + ai * br;
         }
 
-        fft_.performRealOnlyInverseTransform (product_.data());
+        fft_.inverseReal (product_.data());
 
         // 重叠保留：FFT 尾部的块长样本为有效线性卷积结果。
         auto& ring = rings_[static_cast<size_t> (channel)][static_cast<size_t> (b)];

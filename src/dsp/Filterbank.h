@@ -22,9 +22,9 @@
 #include <vector>
 
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_dsp/juce_dsp.h>
 
 #include "FirDesign.h"
+#include "RealFft.h"
 
 namespace prism
 {
@@ -76,7 +76,6 @@ public:
 
 private:
     static int fftSizeFor (int taps) noexcept;
-    static int fftOrderFor (int fftSize) noexcept;
 
     void rebuild();
     void processHop (int channel);
@@ -85,7 +84,7 @@ private:
     int fftSize_;
     double sampleRate_ = 0.0;
     std::array<double, kNumCrossovers> crossovers_ {};
-    juce::dsp::FFT fft_;
+    RealFft fft_;
 
     std::array<std::vector<float>, kNumOutputBands> bandSpectra_;
     std::array<std::vector<float>, kMaxChannels> history_;
