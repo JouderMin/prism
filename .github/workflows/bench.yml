@@ -3,6 +3,15 @@ name: Bench
 # 只在手动触发时跑，避免占用 Actions 额度。
 on:
   workflow_dispatch:
+    inputs:
+      backend:
+        description: "FFT 后端"
+        type: choice
+        options:
+          - both
+          - juce
+          - pffft
+        default: both
 
 permissions:
   contents: read
@@ -21,14 +30,14 @@ jobs:
             triplet: arm64-osx
             generator: Ninja
             generator_args: ""
-            bench_binary: ./build/ci/PrismBench
+            bench_subpath: PrismBench
           - name: Windows x64
             slug: windows-x64
             os: windows-2022
             triplet: x64-windows
             generator: Visual Studio 17 2022
             generator_args: -A x64
-            bench_binary: ./build/ci/Release/PrismBench.exe
+            bench_subpath: Release/PrismBench.exe
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
 
@@ -71,29 +80,45 @@ jobs:
             ./vcpkg/vcpkg install juce --triplet ${{ matrix.triplet }}
           fi
 
-      - name: Configure
+      - name: Bench JUCE backend
+        if: inputs.backend == 'both' || inputs.backend == 'juce'
         shell: bash
+        env:
+          BACKEND: juce
         run: |
-          cmake -S . -B build/ci \
+          cmake -S . -B build/ci-juce \
             -G "${{ matrix.generator }}" ${{ matrix.generator_args }} \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
             -DPRISM_BUILD_AU=OFF \
             -DPRISM_BUILD_BENCH=ON \
+            -DPRISM_FFT_BACKEND=juce \
             -DPRISM_COPY_PLUGINS=OFF
+          cmake --build build/ci-juce --config Release --target PrismBench --parallel
+          "./build/ci-$BACKEND/${{ matrix.bench_subpath }}" | tee bench-${{ matrix.slug }}-juce.txt
 
-      - name: Build PrismBench
+      - name: Bench pffft backend
+        if: inputs.backend == 'both' || inputs.backend == 'pffft'
         shell: bash
-        run: cmake --build build/ci --config Release --target PrismBench --parallel
-
-      - name: Run PrismBench
-        shell: bash
-        run: ${{ matrix.bench_binary }} | tee bench-${{ matrix.slug }}.txt
+        env:
+          BACKEND: pffft
+        run: |
+          cmake -S . -B build/ci-pffft \
+            -G "${{ matrix.generator }}" ${{ matrix.generator_args }} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
+            -DPRISM_BUILD_AU=OFF \
+            -DPRISM_BUILD_BENCH=ON \
+            -DPRISM_FFT_BACKEND=pffft \
+            -DPRISM_COPY_PLUGINS=OFF
+          cmake --build build/ci-pffft --config Release --target PrismBench --parallel
+          "./build/ci-$BACKEND/${{ matrix.bench_subpath }}" | tee bench-${{ matrix.slug }}-pffft.txt
 
       - name: Upload bench output
         uses: actions/upload-artifact@v4
         with:
           name: bench-${{ matrix.slug }}
-          path: bench-${{ matrix.slug }}.txt
+          path: bench-${{ matrix.slug }}-*.txt
           if-no-files-found: error
