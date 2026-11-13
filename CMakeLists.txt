@@ -18,8 +18,9 @@ option(PRISM_COPY_PLUGINS "Build 后把插件拷进 ~/Library/Audio/Plug-Ins" OF
 # AU 只有 Apple 平台可用；Windows CI 显式关掉，只构建 VST3 与 Standalone。
 option(PRISM_BUILD_AU "构建 AU 目标（仅 macOS）" ON)
 
-# FFT 后端：默认 juce（vDSP / JUCE fallback），pffft 为可选的 vendored 实现。
-set(PRISM_FFT_BACKEND "juce" CACHE STRING "FFT 后端：juce 或 pffft")
+# FFT 后端：默认 pffft（vendored）。Windows x64 上 juce 后端比 pffft 慢 8.5×，
+# 故默认 pffft；juce 保留为可选回退（-DPRISM_FFT_BACKEND=juce）。
+set(PRISM_FFT_BACKEND "pffft" CACHE STRING "FFT 后端：pffft 或 juce")
 set_property(CACHE PRISM_FFT_BACKEND PROPERTY STRINGS juce pffft)
 
 if(NOT PRISM_FFT_BACKEND STREQUAL "juce" AND NOT PRISM_FFT_BACKEND STREQUAL "pffft")

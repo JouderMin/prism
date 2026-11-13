@@ -46,7 +46,9 @@ JUCE 8.0.7 + CMake + C++20。当前提供 AU、VST3、Standalone 三种目标，
 
 ## 当前状态
 
-AU、VST3、Standalone 均可构建并通过验证：`auval -v aufx Prsm Stgz` 为 AU VALIDATION SUCCEEDED，VST3 在 pluginval 1.0.4 严格度 10 下为 SUCCESS，28 条自动化测试通过。
+AU、VST3、Standalone 均可构建并通过验证：`auval -v aufx Prsm Stgz` 为 AU VALIDATION SUCCEEDED，VST3 在 pluginval 1.0.4 严格度 10 下为 SUCCESS，31 条自动化测试通过。
+
+默认 FFT 后端是 vendored pffft；Windows x64 上 juce 后端的 filterbank 约慢 10×、total 约慢 8.5×。Apple M3 本机 `PrismBench`（48 kHz、立体声、块 128）约 filterbank 52.8 / opto+mix 19.4 / total 72.1 µs/block；用 juce 回退时为 110.8 / 19.8 / 130.6 µs/block。回退只需 configure 时加 `-DPRISM_FFT_BACKEND=juce`。
 
 界面是 MVP：7 根光柱加 5 个旋钮。
 
