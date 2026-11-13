@@ -142,6 +142,19 @@ PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& proce
         };
     }
 
+    // DELTA：监听处理差信号。开时标题同色高亮，关时退到提示色。
+    deltaButton = std::make_unique<juce::TextButton> ("DELTA");
+    deltaButton->setName ("DELTA");
+    deltaButton->setClickingTogglesState (true);
+    deltaButton->setColour (juce::TextButton::buttonColourId, trackColour);
+    deltaButton->setColour (juce::TextButton::buttonOnColourId, titleColour.withAlpha (0.18f));
+    deltaButton->setColour (juce::TextButton::textColourOffId, hintColour);
+    deltaButton->setColour (juce::TextButton::textColourOnId, titleColour);
+    addAndMakeVisible (*deltaButton);
+
+    deltaAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        audioProcessor.apvts, prism::parameters::delta, *deltaButton);
+
     // 先建好控件再定尺寸，setSize 会触发 resized()。
     setSize (720, 480);
     startTimerHz (kTimerHz);
@@ -181,9 +194,14 @@ void PrismAudioProcessorEditor::paint (juce::Graphics& g)
     g.setFont (juce::Font (juce::FontOptions { 30.0f, juce::Font::bold }));
     g.drawText ("PRISM", prismTextBounds, juce::Justification::centredLeft, false);
 
+    auto subtitleArea = titleRowBounds;
+
+    if (deltaButton != nullptr)
+        subtitleArea = subtitleArea.withTrimmedRight (deltaButton->getWidth() + 14);
+
     g.setColour (hintColour);
     g.setFont (juce::Font (juce::FontOptions { 12.0f, juce::Font::plain }));
-    g.drawText ("SEVEN-BAND OPTO COMPRESSOR", titleRowBounds, juce::Justification::centredRight, false);
+    g.drawText ("SEVEN-BAND OPTO COMPRESSOR", subtitleArea, juce::Justification::centredRight, false);
 
     g.setColour (accentColour.withAlpha (0.45f));
     g.fillRect (panel.getX() + 20.0f, panel.getY() + 1.0f, panel.getWidth() - 40.0f, 1.0f);
@@ -262,6 +280,13 @@ void PrismAudioProcessorEditor::resized()
 {
     auto inner = getLocalBounds().reduced (12);
     titleRowBounds = inner.removeFromTop (52).reduced (20, 0);
+
+    if (deltaButton != nullptr)
+    {
+        auto titleContent = titleRowBounds;
+        const auto buttonArea = titleContent.removeFromRight (62);
+        deltaButton->setBounds (buttonArea.withSizeKeepingCentre (62, 24));
+    }
 
     constexpr float logoHeight = 17.0f;
     constexpr float logoAspect = 5.646f; // Assets/logo.svg: 73.237 / 12.969

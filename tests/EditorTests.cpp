@@ -59,6 +59,7 @@ public:
             juce::Slider* amountKnob = nullptr;
             juce::Slider* spectrumKnob = nullptr;
             juce::Slider* inputKnob = nullptr;
+            juce::TextButton* deltaButton = nullptr;
 
             for (int i = 0; i < editor->getNumChildComponents(); ++i)
             {
@@ -75,9 +76,21 @@ public:
                     if (slider->getName() == "INPUT")
                         inputKnob = slider;
                 }
+
+                if (auto* button = dynamic_cast<juce::TextButton*> (editor->getChildComponent (i)))
+                    if (button->getName() == "DELTA")
+                        deltaButton = button;
             }
 
             expectEquals (sliderCount, 5);
+            expect (deltaButton != nullptr, "DELTA button must exist in the title row");
+
+            if (deltaButton != nullptr)
+            {
+                expect (! deltaButton->getToggleState());
+                expect (deltaButton->isVisible());
+            }
+
             expect (amountKnob != nullptr);
 
             if (amountKnob != nullptr)
@@ -152,6 +165,45 @@ public:
 
         logoEditor.reset();
 
+        beginTest ("DELTA button toggles the parameter");
+
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> deltaEditor (processor.createEditor());
+            auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (deltaEditor.get());
+            expect (typedEditor != nullptr);
+
+            if (typedEditor != nullptr)
+            {
+                auto* button = typedEditor->getDeltaButtonForTesting();
+                expect (button != nullptr);
+
+                if (button != nullptr)
+                {
+                    expect (! button->getToggleState());
+                    expect (button->getClickingTogglesState());
+
+                    // 控制台测试没有模态消息循环，直接走按钮的 toggle 路径；
+                    // clickingTogglesState 已在上面确认，接线与真实点击一致。
+                    button->setToggleState (true, juce::sendNotification);
+
+                    expect (button->getToggleState(), "toggle must turn DELTA on");
+
+                    auto* deltaValue = processor.apvts.getRawParameterValue ("delta");
+                    expect (deltaValue != nullptr);
+
+                    if (deltaValue != nullptr)
+                        expectGreaterThan (deltaValue->load(), 0.5f);
+
+                    button->setToggleState (false, juce::sendNotification);
+
+                    expect (! button->getToggleState(), "second toggle must turn DELTA off");
+
+                    if (deltaValue != nullptr)
+                        expectLessThan (deltaValue->load(), 0.5f);
+                }
+            }
+        }
+
         beginTest ("editor snapshot is written as 720x480 PNG");
 
         // 截图前把三个读数改成非默认值，便于用快照核对格式。
@@ -164,6 +216,7 @@ public:
         setPlainValue ("input", 3.7f);
         setPlainValue ("spectrum", 25.0f);
         setPlainValue ("amount", 37.0f);
+        setPlainValue ("delta", 1.0f);
 
         std::unique_ptr<juce::AudioProcessorEditor> snapshotEditor (processor.createEditor());
         expect (snapshotEditor != nullptr);
@@ -186,6 +239,15 @@ public:
 
             if (slider->getName() == "INPUT")
                 expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("3.7 dB"));
+        }
+
+        if (auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (snapshotEditor.get()))
+        {
+            auto* button = typedEditor->getDeltaButtonForTesting();
+            expect (button != nullptr);
+
+            if (button != nullptr)
+                expect (button->getToggleState(), "snapshot must show DELTA enabled");
         }
 
         const auto image = snapshotEditor->createComponentSnapshot (snapshotEditor->getLocalBounds());

@@ -51,6 +51,19 @@ void processInBlocks (prism::PrismDsp& dsp, juce::AudioBuffer<float>& buffer, in
     }
 }
 
+juce::AudioBuffer<float> renderEngine (const prism::EngineParams& params,
+                                       const juce::AudioBuffer<float>& input,
+                                       int blockSize)
+{
+    prism::PrismDsp dsp;
+    dsp.setParams (params);
+    dsp.prepare (kSampleRate, blockSize, input.getNumChannels());
+
+    juce::AudioBuffer<float> output (input);
+    processInBlocks (dsp, output, blockSize);
+    return output;
+}
+
 double rmsOf (const juce::AudioBuffer<float>& buffer, int start, int length, int channel)
 {
     double sum = 0.0;
@@ -75,6 +88,7 @@ public:
         testCompression();
         testSilence();
         testLatency();
+        testDelta();
         testSmoothing();
     }
 
@@ -214,6 +228,79 @@ private:
                     + ", value " + juce::String (peakValue, 6));
         expectEquals (peakIndex, 1152);
         expectWithinAbsoluteError (peakValue, 1.0f, 1.0e-2f);
+    }
+
+    void testDelta()
+    {
+        beginTest ("DELTA outputs the aligned wet-minus-dry difference");
+
+        constexpr int kLength = 16384;
+
+        juce::AudioBuffer<float> input (2, kLength);
+        juce::Random random (20261113);
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kLength; ++i)
+                input.getWritePointer (ch)[i] = (random.nextFloat() * 2.0f - 1.0f) * 0.25f;
+
+        prism::EngineParams normalParams;
+        normalParams.amount01 = 0.8f;
+        normalParams.mix01 = 1.0f;
+
+        auto dryParams = normalParams;
+        dryParams.amount01 = 0.0f;
+
+        auto deltaParams = normalParams;
+        deltaParams.delta = true;
+
+        const auto normal = renderEngine (normalParams, input, kProcessBlock);
+        const auto dry = renderEngine (dryParams, input, kProcessBlock);
+        const auto delta = renderEngine (deltaParams, input, kProcessBlock);
+
+        double maxDifference = 0.0;
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kLength; ++i)
+            {
+                const auto expected = static_cast<double> (normal.getReadPointer (ch)[i])
+                                    - static_cast<double> (dry.getReadPointer (ch)[i]);
+                const auto actual = static_cast<double> (delta.getReadPointer (ch)[i]);
+                maxDifference = juce::jmax (maxDifference, std::abs (actual - expected));
+            }
+
+        logMessage ("max DELTA vs (normal - dry) error: " + juce::String (maxDifference, 12));
+        expectLessThan (maxDifference, 1.0e-6);
+
+        // AMOUNT=0 时 wet 与 dry 相同，DELTA 必须静音。
+        auto silentDeltaParams = dryParams;
+        silentDeltaParams.delta = true;
+        const auto silentDelta = renderEngine (silentDeltaParams, input, kProcessBlock);
+
+        auto silentPeak = 0.0f;
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kLength; ++i)
+                silentPeak = juce::jmax (silentPeak,
+                                         std::abs (silentDelta.getReadPointer (ch)[i]));
+
+        logMessage ("AMOUNT=0 DELTA peak: " + juce::String (silentPeak, 12));
+        expectLessThan (silentPeak, 1.0e-5f); // < -100 dBFS
+
+        // MIX=0 时正常输出就是 dryRef，DELTA 相减严格为 0。
+        auto mixZeroParams = normalParams;
+        mixZeroParams.mix01 = 0.0f;
+        mixZeroParams.delta = true;
+        const auto mixZero = renderEngine (mixZeroParams, input, kProcessBlock);
+
+        auto mixZeroPeak = 0.0f;
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kLength; ++i)
+                mixZeroPeak = juce::jmax (mixZeroPeak,
+                                          std::abs (mixZero.getReadPointer (ch)[i]));
+
+        logMessage ("MIX=0 DELTA peak: " + juce::String (mixZeroPeak, 12));
+        expectLessThan (mixZeroPeak, 1.0e-12f);
     }
 
     void testSmoothing()

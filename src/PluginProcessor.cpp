@@ -35,7 +35,7 @@ PrismAudioProcessor::PrismAudioProcessor()
       apvts (*this, nullptr, juce::Identifier ("PRISM"), createParameterLayout())
 {
     // 状态格式版本；将来改布局时靠它做迁移。
-    apvts.state.setProperty (juce::Identifier ("version"), 1, nullptr);
+    apvts.state.setProperty (juce::Identifier ("version"), 2, nullptr);
 
     cacheParameterPointers();
 
@@ -50,6 +50,7 @@ void PrismAudioProcessor::cacheParameterPointers()
     mixParam = apvts.getRawParameterValue (prism::parameters::mix);
     inputParam = apvts.getRawParameterValue (prism::parameters::input);
     outputParam = apvts.getRawParameterValue (prism::parameters::output);
+    deltaParam = apvts.getRawParameterValue (prism::parameters::delta);
 }
 
 void PrismAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -102,6 +103,8 @@ void PrismAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     params.mix01 = mixParam->load (std::memory_order_relaxed) * 0.01f;
     params.inputDb = inputParam->load (std::memory_order_relaxed);
     params.outputDb = outputParam->load (std::memory_order_relaxed);
+    params.delta = deltaParam != nullptr
+                && deltaParam->load (std::memory_order_relaxed) > 0.5f;
 
     dsp.setParams (params);
     dsp.processBlock (buffer);
@@ -130,7 +133,19 @@ void PrismAudioProcessor::setStateInformation (const void* data, int sizeInBytes
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
         return;
 
-    apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    auto incoming = juce::ValueTree::fromXml (*xml);
+    const auto version = static_cast<int> (incoming.getProperty ("version", 1));
+
+    apvts.replaceState (incoming);
+
+    // v1 没有 DELTA 参数；旧工程必须迁移成 delta=false，而不是沿用当前界面值。
+    if (version < 2)
+    {
+        if (auto* deltaParameter = apvts.getParameter (prism::parameters::delta))
+            deltaParameter->setValueNotifyingHost (0.0f);
+    }
+
+    apvts.state.setProperty (juce::Identifier ("version"), 2, nullptr);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

@@ -27,7 +27,7 @@
 
 class PrismAudioProcessor;
 
-// PRISM 主界面：720×480，上面一条标题，中间 7 根光柱，下面 5 个旋钮。
+// PRISM 主界面：720×480，上面一条标题（右侧 DELTA 开关），中间 7 根光柱，下面 5 个旋钮。
 // 光柱 30 Hz 从处理器 meters() 读取；旋钮经 SliderAttachment 绑定 APVTS。
 // 全部成员是值或 unique_ptr，不使用裸 new/delete。
 class PrismAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -45,6 +45,7 @@ public:
     juce::Rectangle<float> getLogoBoundsForTesting() const noexcept { return logoBounds; }
     juce::Rectangle<int> getTitleRowBoundsForTesting() const noexcept { return titleRowBounds; }
     juce::Rectangle<int> getPrismTextBoundsForTesting() const noexcept { return prismTextBounds; }
+    juce::TextButton* getDeltaButtonForTesting() const noexcept { return deltaButton.get(); }
 
 private:
     static constexpr int kNumBands = static_cast<int> (prism::kBands.size());
@@ -61,6 +62,10 @@ private:
     std::array<std::unique_ptr<juce::Slider>, kNumKnobs> knobs;
     std::array<std::unique_ptr<juce::Label>, kNumKnobs> knobLabels;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, kNumKnobs> attachments;
+
+    // 标题行右侧的 DELTA 监听开关；绑定 bool 参数，不改变 5 个旋钮的布局。
+    std::unique_ptr<juce::TextButton> deltaButton;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> deltaAttachment;
 
     juce::Rectangle<int> meterArea;
 

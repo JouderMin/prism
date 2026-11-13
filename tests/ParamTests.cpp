@@ -35,16 +35,17 @@ struct ExpectedParam
     float defaultValue;
 };
 
-// spec 第 6 节的 5 个参数，顺序固定。
-constexpr std::array<ExpectedParam, 5> kExpectedParams { {
+// spec 第 6 节：5 个连续参数 + DELTA 开关，顺序固定。
+constexpr std::array<ExpectedParam, 6> kExpectedParams { {
     { "amount", "AMOUNT", 0.0f, 100.0f, 50.0f },
     { "spectrum", "SPECTRUM", -100.0f, 100.0f, 0.0f },
     { "mix", "MIX", 0.0f, 100.0f, 100.0f },
     { "input", "INPUT", -12.0f, 24.0f, 0.0f },
     { "output", "OUTPUT", -24.0f, 12.0f, 0.0f },
+    { "delta", "DELTA", 0.0f, 1.0f, 0.0f },
 } };
 
-constexpr std::array<float, 5> kRoundTripValues { { 77.0f, -42.0f, 33.0f, 9.5f, -13.25f } };
+constexpr std::array<float, 6> kRoundTripValues { { 77.0f, -42.0f, 33.0f, 9.5f, -13.25f, 1.0f } };
 
 // 读数格式：33.33 / 12.345 / -0.04 / 最小 / 最大 / 默认 的期望字符串。
 // 33.33 对 INPUT/OUTPUT 超出范围，只用于 formatValue 纯函数；参数 getText 会先夹取。
@@ -99,7 +100,7 @@ public:
 
     void runTest() override
     {
-        beginTest ("parameter table: 5 params with IDs, ranges and defaults from spec 6");
+        beginTest ("parameter table: 5 continuous params + DELTA with IDs, ranges and defaults from spec 6");
 
         {
             PrismAudioProcessor processor;
@@ -126,7 +127,7 @@ public:
             }
         }
 
-        beginTest ("state round-trip preserves all five parameter values");
+        beginTest ("state round-trip preserves all six parameter values");
 
         {
             PrismAudioProcessor source;
@@ -159,8 +160,8 @@ public:
 
             logMessage ("round-trip values: " + readBack.trim());
 
-            // 版本属性也要随状态一起往返。
-            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 1);
+            // 版本属性也要随状态一起往返；DELTA 是 v2 新增。
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 2);
         }
 
         beginTest ("bus layout: stereo in/out accepted, mono rejected");
@@ -185,11 +186,48 @@ public:
                     "mono in/out must be rejected");
         }
 
-        beginTest ("APVTS state version is 1");
+        beginTest ("APVTS state version is 2 and DELTA is automatable");
 
         {
             PrismAudioProcessor processor;
-            expectEquals (static_cast<int> (processor.apvts.state.getProperty ("version")), 1);
+            expectEquals (static_cast<int> (processor.apvts.state.getProperty ("version")), 2);
+
+            auto* delta = processor.apvts.getParameter ("delta");
+            expect (delta != nullptr);
+
+            if (delta != nullptr)
+                expect (delta->isAutomatable());
+        }
+
+        beginTest ("version 1 state migrates with DELTA off");
+
+        {
+            // 构造一个 v1 状态：没有 delta 子节点，版本属性为 1。
+            PrismAudioProcessor legacy;
+            legacy.apvts.state.setProperty (juce::Identifier ("version"), 1, nullptr);
+
+            auto deltaChild = legacy.apvts.state.getChildWithProperty (
+                juce::Identifier ("id"), juce::String ("delta"));
+
+            if (deltaChild.isValid())
+                legacy.apvts.state.removeChild (deltaChild, nullptr);
+
+            juce::MemoryBlock legacyState;
+            legacy.getStateInformation (legacyState);
+
+            PrismAudioProcessor destination;
+            setParameter (destination, "delta", 1.0f);
+
+            destination.setStateInformation (legacyState.getData(),
+                                              static_cast<int> (legacyState.getSize()));
+
+            const auto* deltaValue = destination.apvts.getRawParameterValue ("delta");
+            expect (deltaValue != nullptr);
+
+            if (deltaValue != nullptr)
+                expectLessThan (deltaValue->load(), 0.5f);
+
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 2);
         }
 
         beginTest ("value formatting: 0.1 dB, integer percent, SPECTRUM plus sign");

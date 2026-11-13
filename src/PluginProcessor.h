@@ -25,14 +25,14 @@
 #include "dsp/PrismDsp.h"
 
 // PRISM 七段光电压缩器。
-// 5 个参数经 APVTS 读入 PrismDsp；延迟 1152 样本由引擎上报。
+// 5 个连续参数 + DELTA 开关经 APVTS 读入 PrismDsp；延迟 1152 样本由引擎上报。
 class PrismAudioProcessor final : public juce::AudioProcessor
 {
 public:
     PrismAudioProcessor();
     ~PrismAudioProcessor() override = default;
 
-    // 5 个参数的定义在 Parameters.h；这里只做转发，便于测试与后续接线。
+    // 参数定义在 Parameters.h；这里只做转发，便于测试与后续接线。
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     // ---- AudioProcessor ---------------------------------------------------
@@ -83,6 +83,7 @@ private:
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* inputParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
+    std::atomic<float>* deltaParam = nullptr;
 
     double currentSampleRate = 0.0;
     int currentBlockSize = 0;

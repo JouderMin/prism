@@ -29,6 +29,7 @@ JUCE 8.0.7 + CMake + C++20。当前提供 AU、VST3、Standalone 三种目标，
 | MIX | 0–100 % | 100 | 干湿比 |
 | INPUT | −12–+24 dB | 0 | 输入增益 |
 | OUTPUT | −24–+12 dB | 0 | 输出增益 |
+| DELTA | 开/关 | 关 | 监听处理差信号（out − 对齐后的干声）；MIX=0 时恒为静音 |
 
 旋钮读数：dB 一位小数，百分比整数，SPECTRUM 正值带 `+`。
 
@@ -46,13 +47,13 @@ JUCE 8.0.7 + CMake + C++20。当前提供 AU、VST3、Standalone 三种目标，
 
 ## 当前状态
 
-AU、VST3、Standalone 均可构建并通过验证：`auval -v aufx Prsm Stgz` 为 AU VALIDATION SUCCEEDED，VST3 在 pluginval 1.0.4 严格度 10 下为 SUCCESS，31 条自动化测试通过。
+AU、VST3、Standalone 均可构建并通过验证：`auval -v aufx Prsm Stgz` 为 AU VALIDATION SUCCEEDED，VST3 在 pluginval 1.0.4 严格度 10 下为 SUCCESS，35 条自动化测试通过。
 
 默认 FFT 后端是 vendored pffft；Windows x64 上 juce 后端的 filterbank 约慢 10×、total 约慢 8.5×。Apple M3 本机 `PrismBench`（48 kHz、立体声、块 128）约 filterbank 52.8 / opto+mix 19.4 / total 72.1 µs/block；用 juce 回退时为 110.8 / 19.8 / 130.6 µs/block。回退只需 configure 时加 `-DPRISM_FFT_BACKEND=juce`。
 
-界面是 MVP：7 根光柱加 5 个旋钮。
+界面是 MVP：7 根光柱、5 个旋钮，标题行右侧有 DELTA 开关。
 
-未做：双时间常数释放、预设、A/B、侧链、电平刻度。
+未做：预设、A/B、侧链、电平刻度。
 
 ## 贡献方式
 

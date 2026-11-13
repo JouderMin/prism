@@ -176,6 +176,7 @@ void PrismDsp::setParams (const EngineParams& params) noexcept
     targets_.mix01 = juce::jlimit (0.0f, 1.0f, params.mix01);
     targets_.inputDb = juce::jlimit (-12.0f, 24.0f, params.inputDb);
     targets_.outputDb = juce::jlimit (-24.0f, 12.0f, params.outputDb);
+    targets_.delta = params.delta;
 
     amount_.setTarget (targets_.amount01);
     spectrum_.setTarget (targets_.spectrum);
@@ -316,11 +317,21 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
 
         dryWrite_ = (dryWrite_ + 1) % kDryDelaySamples;
 
-        buffer.getWritePointer (0)[i] = (mix * wetLeft + (1.0f - mix) * dryLeft) * outputGain;
+        auto leftOut = (mix * wetLeft + (1.0f - mix) * dryLeft) * outputGain;
+        auto rightOut = (mix * wetRight + (1.0f - mix) * dryRight) * outputGain;
+
+        // DELTA：从正常输出里减掉对齐、且同样经过 input/output 增益的干声。
+        // MIX=0 时正常输出就是 dryRef，相减严格为 0（不变量）。
+        if (targets_.delta)
+        {
+            leftOut -= dryLeft * outputGain;
+            rightOut -= dryRight * outputGain;
+        }
+
+        buffer.getWritePointer (0)[i] = leftOut;
 
         if (numChannels > 1)
-            buffer.getWritePointer (1)[i]
-                = (mix * wetRight + (1.0f - mix) * dryRight) * outputGain;
+            buffer.getWritePointer (1)[i] = rightOut;
 
         autoGainPhase_ = (autoGainPhase_ + 1) & (kAutoGainUpdateSamples - 1);
     }

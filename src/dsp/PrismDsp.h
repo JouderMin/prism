@@ -39,6 +39,7 @@ struct EngineParams
     float mix01 = 1.0f;     // 0..1，干湿比
     float inputDb = 0.0f;   // -12..+24 dB
     float outputDb = 0.0f;  // -24..+12 dB
+    bool delta = false;     // true 时输出处理差信号（out − 对齐后的干声）
 };
 
 /** 7 段光电压缩器引擎。
