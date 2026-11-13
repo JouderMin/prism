@@ -188,7 +188,7 @@ private:
 
     void testReleaseLinearity()
     {
-        beginTest ("release is near-linear in dB domain (20%-80% fit deviation < 1 dB)");
+        beginTest ("release is near-linear in dB domain during the fast stage (fit deviation < 1 dB)");
 
         for (int b = 0; b < static_cast<int> (prism::kBands.size()); ++b)
         {
@@ -220,7 +220,8 @@ private:
             {
                 const auto progress = (db[i] - dbStart) / span;
 
-                if (progress < 0.2 || progress > 0.8)
+                // 6 dB 拐点进入 1200 ms 尾段；线性度只在拐点前（约 50% 行程）评估。
+                if (progress < 0.2 || progress > 0.45)
                     continue;
 
                 const auto t = static_cast<double> (i) / kSampleRate;
@@ -246,7 +247,7 @@ private:
             {
                 const auto progress = (db[i] - dbStart) / span;
 
-                if (progress < 0.2 || progress > 0.8)
+                if (progress < 0.2 || progress > 0.45)
                     continue;
 
                 const auto t = static_cast<double> (i) / kSampleRate;
@@ -303,10 +304,8 @@ private:
                         + juce::String (recoveryMs, 1) + " ms (gain "
                         + juce::String (settled6Db, 2) + " -> " + juce::String (settled18Db, 2) + " dB)");
 
-            // spec 5.4 实测值；12 dB 阶跃的 90% 点在 12 dB 门限之前，
-            // 因此仍由 60 ms 快段主导，双段尾段只影响最后不到 10%。
             constexpr std::array<double, 7> kExpectedRecoveryMs {
-                232.5, 202.8, 175.5, 155.2, 139.7, 125.2, 114.0
+                1098.0, 1104.3, 1080.3, 1055.1, 1038.5, 1014.7, 980.8
             };
 
             expectWithinAbsoluteError (recoveryMs,
@@ -318,88 +317,107 @@ private:
 
     void testDualReleaseShape()
     {
-        beginTest ("dual release: 60 ms fast stage then 600 ms tail");
+        beginTest ("dual release: 60 ms fast, 6 dB latch, 1200 ms tail");
 
         constexpr auto targetLevel = 0.125f; // -18 dBFS
+        const auto sixDbGain = static_cast<float> (std::pow (10.0, -6.0 / 20.0));
 
         for (int b = 0; b < static_cast<int> (prism::kBands.size()); ++b)
         {
-            prism::OptoBand band (b);
-            band.prepare (kSampleRate);
-            band.setDrive (0.0f);
+            // 1) 3 dB 小阶跃不会进尾段，直接测快段 63%。
+            prism::OptoBand fastBand (b);
+            fastBand.prepare (kSampleRate);
+            fastBand.setDrive (0.0f);
 
-            // 先让包络稳定在 0.5（约 -6 dBFS），再阶跃到 0.125（约 -18 dBFS）。
             for (int i = 0; i < 24000; ++i)
-                band.processSample (0.5f);
+                fastBand.processSample (0.5f);
 
-            const auto initial = band.currentEnvelope();
-            expectGreaterThan (initial, 0.4f);
-
-            // 快段 63% 点是相对阶跃目标计算的：target + 0.368·(initial − target)。
-            const auto fastTarget = targetLevel + 0.36787945f * (initial - targetLevel);
-            const auto twelveDbTarget = initial * 0.25118864f; // 10^(-12/20)
+            const auto fastInitial = fastBand.currentEnvelope();
+            const auto threeDbLevel = fastInitial * static_cast<float> (std::pow (10.0, -3.0 / 20.0));
+            const auto fastTarget = threeDbLevel + 0.36787945f * (fastInitial - threeDbLevel);
             auto fastSamples = -1;
-            auto twelveDbSamples = -1;
-            auto switchSamples = -1;
-            auto envelopeAtSwitch = 0.0f;
 
-            for (int i = 0; i < 48000; ++i)
+            for (int i = 0; i < 24000; ++i)
             {
-                band.processSample (targetLevel);
+                fastBand.processSample (threeDbLevel);
 
-                const auto envelope = band.currentEnvelope();
-
-                if (fastSamples < 0 && envelope <= fastTarget)
-                    fastSamples = i + 1;
-
-                if (envelope <= twelveDbTarget)
+                if (fastBand.currentEnvelope() <= fastTarget)
                 {
-                    twelveDbSamples = i + 1;
-                    switchSamples = i + 1;
-                    envelopeAtSwitch = envelope;
+                    fastSamples = i + 1;
                     break;
                 }
             }
 
             expectGreaterThan (fastSamples, 0);
-            expectGreaterThan (twelveDbSamples, 0);
-            expectGreaterThan (switchSamples, 0);
+            expect (! fastBand.isTailLatched(), "3 dB step must stay in the fast stage");
 
-            // 从切换点测尾段到 63.2% 剩余量的时间。
-            const auto tailTarget = targetLevel + 0.368f * (envelopeAtSwitch - targetLevel);
+            const auto fastMs = 1000.0 * static_cast<double> (fastSamples) / kSampleRate;
+
+            // 2) 12 dB 阶跃：包络跌出峰值下方 6 dB 时锁存尾段。
+            prism::OptoBand band (b);
+            band.prepare (kSampleRate);
+            band.setDrive (0.0f);
+
+            for (int i = 0; i < 24000; ++i)
+                band.processSample (0.5f);
+
+            const auto initial = band.currentEnvelope();
+            expectGreaterThan (initial, 0.4f);
+            expect (! band.isTailLatched());
+
+            auto latchSamples = -1;
+            auto envelopeAtLatch = 0.0f;
+
+            for (int i = 0; i < 48000; ++i)
+            {
+                band.processSample (targetLevel);
+
+                if (band.isTailLatched())
+                {
+                    latchSamples = i + 1;
+                    envelopeAtLatch = band.currentEnvelope();
+                    break;
+                }
+            }
+
+            expectGreaterThan (latchSamples, 0);
+            const auto latchMs = 1000.0 * static_cast<double> (latchSamples) / kSampleRate;
+            const auto latchDropDb = 20.0 * std::log10 (juce::jmax (1.0e-9,
+                                                                    static_cast<double> (envelopeAtLatch / initial)));
+
+            // 锁存必须发生在 6 dB 附近，而不是旧的 12 dB。
+            expectWithinAbsoluteError (envelopeAtLatch, initial * sixDbGain, initial * 0.01f);
+            expectWithinAbsoluteError (latchDropDb, -6.0, 0.3);
+
+            // 3) 从锁存点测尾段 63.2% 剩余量。
+            const auto tailTarget = targetLevel + 0.368f * (envelopeAtLatch - targetLevel);
             auto tailSamples = -1;
 
-            if (switchSamples > 0)
+            for (int i = latchSamples; i < 120000; ++i)
             {
-                for (int i = switchSamples; i < 96000; ++i)
-                {
-                    band.processSample (targetLevel);
+                band.processSample (targetLevel);
 
-                    if (band.currentEnvelope() <= tailTarget)
-                    {
-                        tailSamples = i + 1 - switchSamples;
-                        break;
-                    }
+                if (band.currentEnvelope() <= tailTarget)
+                {
+                    tailSamples = i + 1 - latchSamples;
+                    break;
                 }
             }
 
             expectGreaterThan (tailSamples, 0);
-
-            const auto fastMs = 1000.0 * static_cast<double> (fastSamples) / kSampleRate;
-            const auto twelveDbMs = 1000.0 * static_cast<double> (twelveDbSamples) / kSampleRate;
             const auto tailMs = tailSamples > 0
                                   ? 1000.0 * static_cast<double> (tailSamples) / kSampleRate
                                   : -1.0;
 
             logMessage ("band " + juce::String (b + 1)
                         + " fast63 = " + juce::String (fastMs, 2)
-                        + " ms, 12 dB = " + juce::String (twelveDbMs, 2)
-                        + " ms, tail63 = " + juce::String (tailMs, 2) + " ms");
+                        + " ms, latch = " + juce::String (latchMs, 2)
+                        + " ms (" + juce::String (latchDropDb, 2)
+                        + " dB), tail63 = " + juce::String (tailMs, 2) + " ms");
 
-            expectWithinAbsoluteError (fastMs, 60.0, 15.0);
-            expectGreaterThan (twelveDbMs, 300.0);
-            expectLessThan (twelveDbMs, 500.0);
-            expectWithinAbsoluteError (tailMs, 600.0, 150.0);
+            expectWithinAbsoluteError (fastMs, 60.0, 10.0);
+            expectWithinAbsoluteError (latchMs, 65.7, 10.0);
+            expectWithinAbsoluteError (tailMs, 1200.0, 200.0);
         }
     }
 
@@ -486,7 +504,7 @@ private:
 
     void testDetectorTimeConstants()
     {
-        beginTest ("detector envelope: attack 10 ms +/-4, release 60 ms +/-25");
+        beginTest ("detector envelope: attack 10 ms +/-4, fast release reaches -6 dB in 41.6 ms +/-15");
 
         for (int b = 0; b < static_cast<int> (prism::kBands.size()); ++b)
         {
@@ -514,14 +532,14 @@ private:
             expectGreaterThan (attackSamples, 0);
 
             const auto releaseStart = band.currentEnvelope();
-            const auto releaseTarget = 0.368f * releaseStart;
+            const auto sixDbTarget = releaseStart * static_cast<float> (std::pow (10.0, -6.0 / 20.0));
             auto releaseSamples = -1;
 
             for (int i = 0; i < 200000; ++i)
             {
                 band.processSample (0.0f);
 
-                if (band.currentEnvelope() <= releaseTarget)
+                if (band.currentEnvelope() <= sixDbTarget)
                 {
                     releaseSamples = i + 1;
                     break;
@@ -534,10 +552,10 @@ private:
             const auto releaseMs = 1000.0 * static_cast<double> (releaseSamples) / kSampleRate;
 
             logMessage ("band " + juce::String (b + 1) + " attack = " + juce::String (attackMs, 2)
-                        + " ms, release = " + juce::String (releaseMs, 2) + " ms");
+                        + " ms, release to -6 dB = " + juce::String (releaseMs, 2) + " ms");
 
             expectWithinAbsoluteError (attackMs, 10.0, 4.0);
-            expectWithinAbsoluteError (releaseMs, 60.0, 25.0);
+            expectWithinAbsoluteError (releaseMs, 41.6, 15.0);
         }
     }
 

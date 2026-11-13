@@ -82,6 +82,86 @@ void configureKnob (juce::Slider& knob){
 }
 } // namespace
 
+PrismAudioProcessorEditor::DeltaButton::DeltaButton()
+    : juce::TextButton ("Delta")
+{
+    setName ("Delta");
+    setTooltip ("Delta monitor (wet minus dry)");
+    setClickingTogglesState (true);
+    setButtonText ({});
+}
+
+void PrismAudioProcessorEditor::DeltaButton::paintButton (juce::Graphics& g,
+                                                          bool shouldDrawButtonAsHighlighted,
+                                                          bool)
+{
+    const auto circle = getLocalBounds().toFloat().withSizeKeepingCentre (22.0f, 22.0f);
+    const auto on = getToggleState();
+
+    if (on)
+    {
+        g.setColour (findColour (juce::TextButton::buttonOnColourId));
+        g.fillEllipse (circle);
+    }
+    else
+    {
+        g.setColour (findColour (juce::TextButton::buttonColourId));
+        g.fillEllipse (circle);
+        g.setColour (findColour (juce::TextButton::textColourOffId)
+                         .withAlpha (shouldDrawButtonAsHighlighted ? 1.0f : 0.85f));
+        g.drawEllipse (circle, 1.2f);
+    }
+
+    g.setColour (on ? findColour (juce::TextButton::textColourOnId)
+                    : findColour (juce::TextButton::textColourOffId));
+    g.setFont (juce::Font (juce::FontOptions { 12.0f, juce::Font::bold }));
+    g.drawText (juce::String::fromUTF8 ("\xe2\x88\x86"),
+                circle.toNearestInt(), juce::Justification::centred, false);
+}
+
+bool PrismAudioProcessorEditor::DeltaButton::hitTest (int x, int y)
+{
+    const auto centre = getLocalBounds().getCentre();
+    const auto dx = static_cast<float> (x - centre.x);
+    const auto dy = static_cast<float> (y - centre.y);
+    return dx * dx + dy * dy <= 16.0f * 16.0f;
+}
+
+PrismAudioProcessorEditor::LinkButton::LinkButton()
+    : juce::TextButton ("LINK")
+{
+    setName ("Link");
+    setTooltip ("Link OUTPUT to INPUT level");
+    setClickingTogglesState (true);
+}
+
+void PrismAudioProcessorEditor::LinkButton::paintButton (juce::Graphics& g,
+                                                         bool shouldDrawButtonAsHighlighted,
+                                                         bool)
+{
+    const auto bounds = getLocalBounds().toFloat().reduced (0.5f);
+    const auto on = getToggleState();
+
+    if (on)
+    {
+        g.setColour (findColour (juce::TextButton::buttonOnColourId));
+        g.fillRoundedRectangle (bounds, 10.0f);
+    }
+    else
+    {
+        g.setColour (findColour (juce::TextButton::buttonColourId));
+        g.fillRoundedRectangle (bounds, 10.0f);
+        g.setColour (findColour (juce::TextButton::textColourOffId)
+                         .withAlpha (shouldDrawButtonAsHighlighted ? 1.0f : 0.85f));
+        g.drawRoundedRectangle (bounds, 10.0f, 1.2f);
+    }
+
+    g.setColour (on ? findColour (juce::TextButton::textColourOnId)
+                    : findColour (juce::TextButton::textColourOffId));
+    g.setFont (juce::Font (juce::FontOptions { 10.0f, juce::Font::bold }));
+    g.drawText ("LINK", bounds.toNearestInt(), juce::Justification::centred, false);
+}
+
 PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& processorToEdit)
     : AudioProcessorEditor (&processorToEdit),
       audioProcessor (processorToEdit)
@@ -142,18 +222,27 @@ PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& proce
         };
     }
 
-    // DELTA：监听处理差信号。开时标题同色高亮，关时退到提示色。
-    deltaButton = std::make_unique<juce::TextButton> ("DELTA");
-    deltaButton->setName ("DELTA");
-    deltaButton->setClickingTogglesState (true);
-    deltaButton->setColour (juce::TextButton::buttonColourId, trackColour);
-    deltaButton->setColour (juce::TextButton::buttonOnColourId, titleColour.withAlpha (0.18f));
-    deltaButton->setColour (juce::TextButton::textColourOffId, hintColour);
-    deltaButton->setColour (juce::TextButton::textColourOnId, titleColour);
+    // DELTA：MIX 旋钮中央的圆形监听开关。开时填充标题色、深色 ∆；关时描边。
+    deltaButton = std::make_unique<DeltaButton>();
+    deltaButton->setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    deltaButton->setColour (juce::TextButton::buttonOnColourId, titleColour);
+    deltaButton->setColour (juce::TextButton::textColourOffId, titleColour);
+    deltaButton->setColour (juce::TextButton::textColourOnId, backgroundColour);
     addAndMakeVisible (*deltaButton);
 
     deltaAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         audioProcessor.apvts, prism::parameters::delta, *deltaButton);
+
+    // LINK：INPUT 与 OUTPUT 之间的胶囊开关。开时输出级抵消 INPUT 增益。
+    linkButton = std::make_unique<LinkButton>();
+    linkButton->setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    linkButton->setColour (juce::TextButton::buttonOnColourId, titleColour);
+    linkButton->setColour (juce::TextButton::textColourOffId, titleColour);
+    linkButton->setColour (juce::TextButton::textColourOnId, backgroundColour);
+    addAndMakeVisible (*linkButton);
+
+    linkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        audioProcessor.apvts, prism::parameters::link, *linkButton);
 
     // 先建好控件再定尺寸，setSize 会触发 resized()。
     setSize (720, 480);
@@ -194,14 +283,9 @@ void PrismAudioProcessorEditor::paint (juce::Graphics& g)
     g.setFont (juce::Font (juce::FontOptions { 30.0f, juce::Font::bold }));
     g.drawText ("PRISM", prismTextBounds, juce::Justification::centredLeft, false);
 
-    auto subtitleArea = titleRowBounds;
-
-    if (deltaButton != nullptr)
-        subtitleArea = subtitleArea.withTrimmedRight (deltaButton->getWidth() + 14);
-
     g.setColour (hintColour);
     g.setFont (juce::Font (juce::FontOptions { 12.0f, juce::Font::plain }));
-    g.drawText ("SEVEN-BAND OPTO COMPRESSOR", subtitleArea, juce::Justification::centredRight, false);
+    g.drawText ("SEVEN-BAND OPTO COMPRESSOR", titleRowBounds, juce::Justification::centredRight, false);
 
     g.setColour (accentColour.withAlpha (0.45f));
     g.fillRect (panel.getX() + 20.0f, panel.getY() + 1.0f, panel.getWidth() - 40.0f, 1.0f);
@@ -281,13 +365,6 @@ void PrismAudioProcessorEditor::resized()
     auto inner = getLocalBounds().reduced (12);
     titleRowBounds = inner.removeFromTop (52).reduced (20, 0);
 
-    if (deltaButton != nullptr)
-    {
-        auto titleContent = titleRowBounds;
-        const auto buttonArea = titleContent.removeFromRight (62);
-        deltaButton->setBounds (buttonArea.withSizeKeepingCentre (62, 24));
-    }
-
     constexpr float logoHeight = 17.0f;
     constexpr float logoAspect = 5.646f; // Assets/logo.svg: 73.237 / 12.969
     const auto logoWidth = logoHeight * logoAspect;
@@ -306,15 +383,31 @@ void PrismAudioProcessorEditor::resized()
     meterArea = inner.removeFromTop (212).reduced (20, 6);
 
     auto knobRow = inner.removeFromBottom (176).reduced (16, 0);
-    const auto cellWidth = knobRow.getWidth() / kNumKnobs;
+    constexpr int kLinkSlotWidth = 56;
+    const auto cellWidth = (knobRow.getWidth() - kLinkSlotWidth) / kNumKnobs;
 
     for (int i = 0; i < kNumKnobs; ++i)
     {
-        auto cell = knobRow.withX (knobRow.getX() + i * cellWidth).withWidth (cellWidth).reduced (4, 0);
+        // OUTPUT 前预留 56 px 放 LINK 胶囊，其余四列等宽。
+        const auto columnX = knobRow.getX() + i * cellWidth
+                             + (i == kNumKnobs - 1 ? kLinkSlotWidth : 0);
+        auto cell = juce::Rectangle<int> (columnX, knobRow.getY(), cellWidth, knobRow.getHeight())
+                        .reduced (4, 0);
 
         knobLabels[static_cast<size_t> (i)]->setBounds (cell.removeFromTop (18));
         knobs[static_cast<size_t> (i)]->setBounds (cell.withSizeKeepingCentre (108, 140));
     }
+
+    const auto linkSlot = juce::Rectangle<int> (knobRow.getX() + 4 * cellWidth,
+                                                knobRow.getY(),
+                                                kLinkSlotWidth,
+                                                knobRow.getHeight());
+    const auto knobCentreY = knobs[0]->getBounds().withTrimmedBottom (18).getCentreY();
+    linkButton->setBounds (juce::Rectangle<int> (44, 20)
+                               .withCentre ({ linkSlot.getCentreX(), knobCentreY }));
+
+    const auto mixRotary = knobs[2]->getBounds().withTrimmedBottom (18);
+    deltaButton->setBounds (juce::Rectangle<int> (32, 32).withCentre (mixRotary.getCentre()));
 }
 
 void PrismAudioProcessorEditor::timerCallback()

@@ -27,7 +27,8 @@
 
 class PrismAudioProcessor;
 
-// PRISM 主界面：720×480，上面一条标题（右侧 DELTA 开关），中间 7 根光柱，下面 5 个旋钮。
+// PRISM 主界面：720×480，上面一条标题，中间 7 根光柱，下面 5 个旋钮。
+// DELTA 是 MIX 旋钮中央的圆形开关，LINK 是 INPUT 与 OUTPUT 之间的胶囊开关。
 // 光柱 30 Hz 从处理器 meters() 读取；旋钮经 SliderAttachment 绑定 APVTS。
 // 全部成员是值或 unique_ptr，不使用裸 new/delete。
 class PrismAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -46,10 +47,30 @@ public:
     juce::Rectangle<int> getTitleRowBoundsForTesting() const noexcept { return titleRowBounds; }
     juce::Rectangle<int> getPrismTextBoundsForTesting() const noexcept { return prismTextBounds; }
     juce::TextButton* getDeltaButtonForTesting() const noexcept { return deltaButton.get(); }
+    juce::TextButton* getLinkButtonForTesting() const noexcept { return linkButton.get(); }
 
 private:
     static constexpr int kNumBands = static_cast<int> (prism::kBands.size());
     static constexpr int kNumKnobs = 5;
+
+    // MIX 圆心的圆形 DELTA 开关：命中圆半径 16 px，绘制直径 22 px。
+    class DeltaButton final : public juce::TextButton
+    {
+    public:
+        DeltaButton();
+        void paintButton (juce::Graphics& g, bool shouldDrawButtonAsHighlighted,
+                          bool shouldDrawButtonAsDown) override;
+        bool hitTest (int x, int y) override;
+    };
+
+    // INPUT/OUTPUT 之间的胶囊 LINK 开关。
+    class LinkButton final : public juce::TextButton
+    {
+    public:
+        LinkButton();
+        void paintButton (juce::Graphics& g, bool shouldDrawButtonAsHighlighted,
+                          bool shouldDrawButtonAsDown) override;
+    };
 
     void timerCallback() override;
     void drawMeters (juce::Graphics& g) const;
@@ -63,9 +84,13 @@ private:
     std::array<std::unique_ptr<juce::Label>, kNumKnobs> knobLabels;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, kNumKnobs> attachments;
 
-    // 标题行右侧的 DELTA 监听开关；绑定 bool 参数，不改变 5 个旋钮的布局。
-    std::unique_ptr<juce::TextButton> deltaButton;
+    // MIX 旋钮中央的 DELTA 监听开关；不改变 5 个旋钮的布局。
+    std::unique_ptr<DeltaButton> deltaButton;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> deltaAttachment;
+
+    // INPUT 与 OUTPUT 之间的 LINK 开关；打开时 OUTPUT 抵消 INPUT 的增益。
+    std::unique_ptr<LinkButton> linkButton;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> linkAttachment;
 
     juce::Rectangle<int> meterArea;
 

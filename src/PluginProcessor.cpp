@@ -35,7 +35,7 @@ PrismAudioProcessor::PrismAudioProcessor()
       apvts (*this, nullptr, juce::Identifier ("PRISM"), createParameterLayout())
 {
     // 状态格式版本；将来改布局时靠它做迁移。
-    apvts.state.setProperty (juce::Identifier ("version"), 2, nullptr);
+    apvts.state.setProperty (juce::Identifier ("version"), 3, nullptr);
 
     cacheParameterPointers();
 
@@ -50,6 +50,7 @@ void PrismAudioProcessor::cacheParameterPointers()
     mixParam = apvts.getRawParameterValue (prism::parameters::mix);
     inputParam = apvts.getRawParameterValue (prism::parameters::input);
     outputParam = apvts.getRawParameterValue (prism::parameters::output);
+    linkParam = apvts.getRawParameterValue (prism::parameters::link);
     deltaParam = apvts.getRawParameterValue (prism::parameters::delta);
 }
 
@@ -103,6 +104,8 @@ void PrismAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     params.mix01 = mixParam->load (std::memory_order_relaxed) * 0.01f;
     params.inputDb = inputParam->load (std::memory_order_relaxed);
     params.outputDb = outputParam->load (std::memory_order_relaxed);
+    params.link = linkParam != nullptr
+               && linkParam->load (std::memory_order_relaxed) > 0.5f;
     params.delta = deltaParam != nullptr
                 && deltaParam->load (std::memory_order_relaxed) > 0.5f;
 
@@ -138,14 +141,17 @@ void PrismAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 
     apvts.replaceState (incoming);
 
-    // v1 没有 DELTA 参数；旧工程必须迁移成 delta=false，而不是沿用当前界面值。
-    if (version < 2)
+    // v1 没有 DELTA/LINK；v2 只有 DELTA。旧工程迁移时两个开关都回落到 false，
+    // 不沿用当前界面值，也不丢其它参数。
+    if (version < 3)
     {
         if (auto* deltaParameter = apvts.getParameter (prism::parameters::delta))
             deltaParameter->setValueNotifyingHost (0.0f);
+        if (auto* linkParameter = apvts.getParameter (prism::parameters::link))
+            linkParameter->setValueNotifyingHost (0.0f);
     }
 
-    apvts.state.setProperty (juce::Identifier ("version"), 2, nullptr);
+    apvts.state.setProperty (juce::Identifier ("version"), 3, nullptr);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

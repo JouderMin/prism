@@ -29,7 +29,7 @@ namespace
 constexpr double kAttackSeconds = 0.001 * static_cast<double> (kDetectorAttackMs);
 constexpr float kLightFloor = 1.0e-12f;
 
-// 峰值下方 12 dB 内走快段；跨过这个门限后切到尾段。
+// 峰值下方 6 dB 内走快段；跨过这个门限后切到尾段。
 const float kPeakHoldThreshold = static_cast<float> (
     std::pow (10.0, -static_cast<double> (kPeakHoldReleaseRangeDb) / 20.0));
 
@@ -152,7 +152,7 @@ void OptoBand::setDrive (float driveDb)
 float OptoBand::processSample (float x) noexcept
 {
     // 1) 整流后一阶包络：带内输入直接进检测器（前馈）。
-    //    释放是程序相关的：峰值 12 dB 内用快段，掉出窗口后用长尾。
+    //    释放是程序相关的：峰值 6 dB 内用快段，掉出窗口后用长尾。
     const auto rectified = std::abs (x);
 
     if (rectified > env_)
@@ -162,7 +162,7 @@ float OptoBand::processSample (float x) noexcept
     }
     else
     {
-        // 一旦跌出峰值下方 12 dB 就锁存到尾段，避免门限附近来回抖动。
+        // 一旦跌出峰值下方 6 dB 就锁存到尾段，避免门限附近来回抖动。
         if (env_ <= peakHold_ * kPeakHoldThreshold)
             tailLatched_ = true;
 
@@ -170,7 +170,7 @@ float OptoBand::processSample (float x) noexcept
         env_ += release * (rectified - env_);
     }
 
-    // peakHold 只负责选择释放段：跟随包络上升，下降按 6 dB/s。
+    // peakHold 只负责选择释放段：快段保持峰值，锁存尾段后才按 6 dB/s 下降。
     if (env_ > peakHold_)
     {
         peakHold_ = env_;

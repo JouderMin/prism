@@ -29,8 +29,8 @@ namespace prism
 
     每样本处理，无分配、无锁、无 I/O。所有状态在构造与 prepare 中确定。
 
-    检测器：整流后一阶包络，attack 10 ms；释放按程序相关双段，峰值 12 dB
-    内 60 ms、跌出后 600 ms；peakHold 在快段保持峰值，进尾段后以 6 dB/s 慢衰减。
+    检测器：整流后一阶包络，attack 10 ms；释放按程序相关双段，峰值 6 dB
+    内 60 ms、跌出后 1200 ms；peakHold 在快段保持峰值，进尾段后以 6 dB/s 慢衰减。
     光强：d = A · s_b · (env / ref)^1.6，ref = −18 dBFS，A = 10^(drive/20)。
     光敏电阻：R = R_dark / (1 + (d/d0)^γ)，按段 τ_ldr 一阶跟随。
     增益：g = (R_s + R)/(R_s + R_dark)，夹到 [g_min, 1]。
@@ -67,6 +67,9 @@ public:
 
     /** 当前慢衰减峰值，供双时间常数测试与诊断用。 */
     float currentPeakHold() const noexcept { return peakHold_; }
+
+    /** 是否已锁存到 1200 ms 尾段；供双段释放测试直接验证 6 dB 拐点。 */
+    bool isTailLatched() const noexcept { return tailLatched_; }
 
     int bandIndex() const noexcept { return bandIndex_; }
 

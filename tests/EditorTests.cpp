@@ -58,8 +58,11 @@ public:
             int sliderCount = 0;
             juce::Slider* amountKnob = nullptr;
             juce::Slider* spectrumKnob = nullptr;
+            juce::Slider* mixKnob = nullptr;
             juce::Slider* inputKnob = nullptr;
+            juce::Slider* outputKnob = nullptr;
             juce::TextButton* deltaButton = nullptr;
+            juce::TextButton* linkButton = nullptr;
 
             for (int i = 0; i < editor->getNumChildComponents(); ++i)
             {
@@ -73,22 +76,47 @@ public:
                     if (slider->getName() == "SPECTRUM")
                         spectrumKnob = slider;
 
+                    if (slider->getName() == "MIX")
+                        mixKnob = slider;
+
                     if (slider->getName() == "INPUT")
                         inputKnob = slider;
+
+                    if (slider->getName() == "OUTPUT")
+                        outputKnob = slider;
                 }
 
                 if (auto* button = dynamic_cast<juce::TextButton*> (editor->getChildComponent (i)))
-                    if (button->getName() == "DELTA")
+                {
+                    if (button->getName() == "Delta")
                         deltaButton = button;
+                    if (button->getName() == "Link")
+                        linkButton = button;
+                }
             }
 
             expectEquals (sliderCount, 5);
-            expect (deltaButton != nullptr, "DELTA button must exist in the title row");
+            expect (deltaButton != nullptr, "DELTA button must exist in the MIX knob");
+            expect (linkButton != nullptr, "LINK button must sit between INPUT and OUTPUT");
 
-            if (deltaButton != nullptr)
+            if (deltaButton != nullptr && mixKnob != nullptr)
             {
                 expect (! deltaButton->getToggleState());
                 expect (deltaButton->isVisible());
+                expect (mixKnob->getBounds().contains (deltaButton->getBounds().getCentre()),
+                        "DELTA centre must sit inside the MIX knob bounds");
+                if (auto* typed = dynamic_cast<PrismAudioProcessorEditor*> (editor.get()))
+                    expect (! typed->getTitleRowBoundsForTesting().contains (
+                                deltaButton->getBounds().getCentre()),
+                            "DELTA must no longer live in the title row");
+            }
+
+            if (linkButton != nullptr && inputKnob != nullptr && outputKnob != nullptr)
+            {
+                expect (! linkButton->getToggleState());
+                expect (linkButton->isVisible());
+                expect (inputKnob->getBounds().getRight() < linkButton->getBounds().getX());
+                expect (linkButton->getBounds().getRight() < outputKnob->getBounds().getX());
             }
 
             expect (amountKnob != nullptr);
@@ -204,6 +232,36 @@ public:
             }
         }
 
+        beginTest ("LINK button toggles the parameter");
+
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> linkEditor (processor.createEditor());
+            auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (linkEditor.get());
+            expect (typedEditor != nullptr);
+
+            if (typedEditor != nullptr)
+            {
+                auto* button = typedEditor->getLinkButtonForTesting();
+                expect (button != nullptr);
+
+                if (button != nullptr)
+                {
+                    expect (! button->getToggleState());
+                    expect (button->getClickingTogglesState());
+                    button->setToggleState (true, juce::sendNotification);
+
+                    auto* linkValue = processor.apvts.getRawParameterValue ("link");
+                    expect (linkValue != nullptr);
+                    if (linkValue != nullptr)
+                        expectGreaterThan (linkValue->load(), 0.5f);
+
+                    button->setToggleState (false, juce::sendNotification);
+                    if (linkValue != nullptr)
+                        expectLessThan (linkValue->load(), 0.5f);
+                }
+            }
+        }
+
         beginTest ("editor snapshot is written as 720x480 PNG");
 
         // 截图前把三个读数改成非默认值，便于用快照核对格式。
@@ -217,6 +275,7 @@ public:
         setPlainValue ("spectrum", 25.0f);
         setPlainValue ("amount", 37.0f);
         setPlainValue ("delta", 1.0f);
+        setPlainValue ("link", 1.0f);
 
         std::unique_ptr<juce::AudioProcessorEditor> snapshotEditor (processor.createEditor());
         expect (snapshotEditor != nullptr);
@@ -239,6 +298,14 @@ public:
 
             if (slider->getName() == "INPUT")
                 expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("3.7 dB"));
+        }
+
+        if (auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (snapshotEditor.get()))
+        {
+            auto* linkButton = typedEditor->getLinkButtonForTesting();
+            expect (linkButton != nullptr);
+            if (linkButton != nullptr)
+                expect (linkButton->getToggleState(), "snapshot must show LINK enabled");
         }
 
         if (auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (snapshotEditor.get()))

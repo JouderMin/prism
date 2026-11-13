@@ -15,7 +15,7 @@ JUCE 8.0.7 + CMake + C++20。当前提供 AU、VST3、Standalone 三种目标，
 ```
 
 - 分频用 2049 抽头线性相位 FIR（Kaiser β=8）。第 k 段取 `LP_k − LP_{k−1}`，7 段求和恒为 1，重建误差约 1e-7。
-- 每段检测器 attack 10 ms、release 60 ms，前馈。光敏电阻按 `R = R_dark / (1 + (d/d0)^γ)` 变化，光强 `d` 由 AMOUNT 与 SPECTRUM 决定。
+- 每段检测器 attack 10 ms；释放为双段：快段 60 ms，跌出峰值下方 6 dB 后锁存 1200 ms 尾段（peakHold 6 dB/s 慢衰减）。前馈。光敏电阻按 `R = R_dark / (1 + (d/d0)^γ)` 变化，光强 `d` 由 AMOUNT 与 SPECTRUM 决定。
 - 每段的 γ、τ、目标斜率固定，像硬件。用户只调总控。
 - 每段有 auto-gain 补偿长期漂移：500 ms，上限 ±12 dB。
 - 全链路延迟 1152 样本，48 kHz 下 24.0 ms。插件向宿主报告，宿主自动补偿。干声走同样延迟的缓冲，MIX 不产生梳状滤波。
@@ -28,6 +28,7 @@ JUCE 8.0.7 + CMake + C++20。当前提供 AU、VST3、Standalone 三种目标，
 | SPECTRUM | −100–+100 % | 0 | 光谱倾斜，负值压低频段、正值压高频段，±6 dB |
 | MIX | 0–100 % | 100 | 干湿比 |
 | INPUT | −12–+24 dB | 0 | 输入增益 |
+| LINK | 开/关 | 关 | 输出级增益 = OUTPUT − INPUT；打开时抵消输入增益 |
 | OUTPUT | −24–+12 dB | 0 | 输出增益 |
 | DELTA | 开/关 | 关 | 监听处理差信号（out − 对齐后的干声）；MIX=0 时恒为静音 |
 
@@ -47,11 +48,11 @@ JUCE 8.0.7 + CMake + C++20。当前提供 AU、VST3、Standalone 三种目标，
 
 ## 当前状态
 
-AU、VST3、Standalone 均可构建并通过验证：`auval -v aufx Prsm Stgz` 为 AU VALIDATION SUCCEEDED，VST3 在 pluginval 1.0.4 严格度 10 下为 SUCCESS，35 条自动化测试通过。
+AU、VST3、Standalone 均可构建并通过验证：`auval -v aufx Prsm Stgz` 为 AU VALIDATION SUCCEEDED，VST3 在 pluginval 1.0.4 严格度 10 下为 SUCCESS，38 条自动化测试通过。
 
 默认 FFT 后端是 vendored pffft；Windows x64 上 juce 后端的 filterbank 约慢 10×、total 约慢 8.5×。Apple M3 本机 `PrismBench`（48 kHz、立体声、块 128）约 filterbank 52.8 / opto+mix 19.4 / total 72.1 µs/block；用 juce 回退时为 110.8 / 19.8 / 130.6 µs/block。回退只需 configure 时加 `-DPRISM_FFT_BACKEND=juce`。
 
-界面是 MVP：7 根光柱、5 个旋钮，标题行右侧有 DELTA 开关。
+界面是 MVP：7 根光柱、5 个旋钮；MIX 圆心内嵌 DELTA 圆形开关，INPUT 与 OUTPUT 之间是 LINK 胶囊开关。
 
 未做：预设、A/B、侧链、电平刻度。
 
@@ -91,7 +92,7 @@ cmake --build --preset debug --target PrismTests
 
 测试会刷新 `build/debug/editor-snapshot.png`，可开图核对界面。提交前要求 debug 与 release 各构建一次、测试全过、`src/` 与 `tests/` 无新警告。
 
-GitHub Actions 在 macOS arm64 与 Windows x64 上构建并跑测试，同时把编译好的 AU、VST3、Standalone 作为运行产物上传，可从对应运行的 Artifacts 下载。
+GitHub Actions 在 macOS x64 与 Windows x64 上构建并跑测试，同时把编译好的 AU、VST3、Standalone 作为运行产物上传，可从对应运行的 Artifacts 下载。
 
 ### 安装验证
 

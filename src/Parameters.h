@@ -24,7 +24,7 @@
 #include <cmath>
 #include <memory>
 
-// PRISM 的 5 个连续参数 + DELTA 开关：ID、范围、默认值集中在这里。
+// PRISM 的 5 个连续参数 + LINK/DELTA 两个开关：ID、范围、默认值集中在这里。
 // 曲线是编译期常量（BandTable.h），参数只改驱动量与配比，不改变曲线形状。
 namespace prism
 {
@@ -38,6 +38,7 @@ inline constexpr const char* spectrum = "spectrum";
 inline constexpr const char* mix = "mix";
 inline constexpr const char* input = "input";
 inline constexpr const char* output = "output";
+inline constexpr const char* link = "link";
 inline constexpr const char* delta = "delta";
 
 struct Spec
@@ -51,7 +52,7 @@ struct Spec
     int decimals;
 };
 
-// 顺序即界面顺序：AMOUNT、SPECTRUM、MIX、INPUT、OUTPUT；DELTA 是标题行开关。
+// 顺序即界面顺序：AMOUNT、SPECTRUM、MIX、INPUT、OUTPUT；LINK 与 DELTA 是开关。
 // 范围与默认值照 spec 第 6 节。
 inline constexpr std::array<Spec, 5> kSpecs { {
     { amount, "AMOUNT", 0.0f, 100.0f, 50.0f, " %", 0 },
@@ -94,7 +95,7 @@ inline float parseValue (const Spec& spec, const juce::String& text)
 
 } // namespace parameters
 
-// 建 5 个 AudioParameterFloat + 1 个 AudioParameterBool。
+// 建 5 个 AudioParameterFloat + 2 个 AudioParameterBool（LINK、DELTA）。
 // 用 make_unique 转移所有权，不写裸 new/delete。
 inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 {
@@ -102,6 +103,14 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     for (const auto& spec : parameters::kSpecs)
     {
+        // LINK 在 INPUT 与 OUTPUT 之间，保持状态与界面顺序一致。
+        if (juce::String (spec.id) == juce::String (parameters::output))
+        {
+            layout.add (std::make_unique<juce::AudioParameterBool> (parameters::link,
+                                                                     "LINK",
+                                                                     false));
+        }
+
         const juce::NormalisableRange<float> range (spec.minValue, spec.maxValue);
 
         // 参数文本与界面文本共用 formatValue / parseValue，避免两套小数位规则。

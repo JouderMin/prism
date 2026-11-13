@@ -89,6 +89,7 @@ public:
         testSilence();
         testLatency();
         testDelta();
+        testLink();
         testSmoothing();
     }
 
@@ -301,6 +302,50 @@ private:
 
         logMessage ("MIX=0 DELTA peak: " + juce::String (mixZeroPeak, 12));
         expectLessThan (mixZeroPeak, 1.0e-12f);
+    }
+
+    void testLink()
+    {
+        beginTest ("LINK makes OUTPUT cancel INPUT gain at the output stage");
+
+        constexpr int kLength = 48000;
+
+        juce::AudioBuffer<float> input (2, kLength);
+        fillSine (input, 1000.0, 0.1f);
+
+        const auto inputRms = rmsOf (input, kLength - 24000, 24000, 0);
+        const auto measureGainDb = [&] (const prism::EngineParams& params)
+        {
+            const auto output = renderEngine (params, input, kProcessBlock);
+            const auto outputRms = rmsOf (output, kLength - 24000, 24000, 0);
+            return 20.0 * std::log10 (outputRms / inputRms);
+        };
+
+        prism::EngineParams params;
+        params.amount01 = 0.0f; // 直通，仅测输入/输出增益级
+        params.mix01 = 1.0f;
+        params.inputDb = 6.0f;
+
+        params.link = false;
+        const auto unlinkedDb = measureGainDb (params);
+        logMessage ("LINK off, INPUT +6 dB: " + juce::String (unlinkedDb, 3) + " dB");
+        expectWithinAbsoluteError (unlinkedDb, 6.0, 0.01);
+
+        params.link = true;
+        const auto linkedDb = measureGainDb (params);
+        const auto linkedOutputStageDb = linkedDb - params.inputDb;
+        logMessage ("LINK on, INPUT +6 dB: net " + juce::String (linkedDb, 3)
+                    + " dB, output stage " + juce::String (linkedOutputStageDb, 3) + " dB");
+        expectWithinAbsoluteError (linkedDb, 0.0, 0.01);
+        expectWithinAbsoluteError (linkedOutputStageDb, -6.0, 0.01);
+
+        params.inputDb = 3.7f;
+        const auto linked37Db = measureGainDb (params);
+        const auto linked37OutputStageDb = linked37Db - params.inputDb;
+        logMessage ("LINK on, INPUT +3.7 dB: net " + juce::String (linked37Db, 3)
+                    + " dB, output stage " + juce::String (linked37OutputStageDb, 3) + " dB");
+        expectWithinAbsoluteError (linked37Db, 0.0, 0.01);
+        expectWithinAbsoluteError (linked37OutputStageDb, -3.7, 0.01);
     }
 
     void testSmoothing()
