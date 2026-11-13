@@ -16,12 +16,14 @@ jobs:
       matrix:
         include:
           - name: macOS arm64
+            slug: macos-arm64
             os: macos-26
             triplet: arm64-osx
             generator: Ninja
             generator_args: ""
             bench_binary: ./build/ci/PrismBench
           - name: Windows x64
+            slug: windows-x64
             os: windows-2022
             triplet: x64-windows
             generator: Visual Studio 17 2022
@@ -87,11 +89,11 @@ jobs:
 
       - name: Run PrismBench
         shell: bash
-        run: ${{ matrix.bench_binary }} | tee bench-${{ matrix.name }}.txt
+        run: ${{ matrix.bench_binary }} | tee bench-${{ matrix.slug }}.txt
 
       - name: Upload bench output
         uses: actions/upload-artifact@v4
         with:
-          name: bench-${{ matrix.name }}
-          path: bench-${{ matrix.name }}.txt
+          name: bench-${{ matrix.slug }}
+          path: bench-${{ matrix.slug }}.txt
           if-no-files-found: error
