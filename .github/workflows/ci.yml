@@ -16,6 +16,7 @@ jobs:
         include:
           - name: macOS arm64
             os: macos-26
+            au_flag: ""
             triplet: arm64-osx
             generator: Ninja
             generator_args: ""
@@ -23,6 +24,7 @@ jobs:
             test_binary: ./build/ci/PrismTests
           - name: Windows x64
             os: windows-2022
+            au_flag: -DPRISM_BUILD_AU=OFF
             triplet: x64-windows
             generator: Visual Studio 17 2022
             generator_args: -A x64
@@ -81,7 +83,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
             -DPRISM_FFT_BACKEND=pffft \
-            -DPRISM_BUILD_AU=OFF \
+            ${{ matrix.au_flag }} \
             -DPRISM_COPY_PLUGINS=OFF
 
       - name: Build
