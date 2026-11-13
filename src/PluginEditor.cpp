@@ -145,15 +145,15 @@ void PrismAudioProcessorEditor::LinkButton::paintButton (juce::Graphics& g,
     if (on)
     {
         g.setColour (findColour (juce::TextButton::buttonOnColourId));
-        g.fillRoundedRectangle (bounds, 10.0f);
+        g.fillRoundedRectangle (bounds, 8.0f);
     }
     else
     {
         g.setColour (findColour (juce::TextButton::buttonColourId));
-        g.fillRoundedRectangle (bounds, 10.0f);
+        g.fillRoundedRectangle (bounds, 8.0f);
         g.setColour (findColour (juce::TextButton::textColourOffId)
                          .withAlpha (shouldDrawButtonAsHighlighted ? 1.0f : 0.85f));
-        g.drawRoundedRectangle (bounds, 10.0f, 1.2f);
+        g.drawRoundedRectangle (bounds, 8.0f, 1.2f);
     }
 
     // 只旋转文字；命中区与裁剪仍由整块按钮 bounds 决定。
@@ -163,7 +163,7 @@ void PrismAudioProcessorEditor::LinkButton::paintButton (juce::Graphics& g,
                                                      bounds.getCentreY()));
     g.setColour (on ? findColour (juce::TextButton::textColourOnId)
                     : findColour (juce::TextButton::textColourOffId));
-    g.setFont (juce::Font (juce::FontOptions { 10.0f, juce::Font::bold }));
+    g.setFont (juce::Font (juce::FontOptions { 9.0f, juce::Font::bold }));
     g.drawText ("LINK", bounds.toNearestInt(), juce::Justification::centred, false);
 }
 
@@ -410,9 +410,10 @@ void PrismAudioProcessorEditor::resized()
     // 竖向 LINK 胶囊居中于 INPUT 右缘与 OUTPUT 左缘之间，命中区就是整钮。
     const auto linkLeft = knobs[3]->getBounds().getRight();
     const auto linkRight = knobs[4]->getBounds().getX();
-    linkButton->setBounds (juce::Rectangle<int> (22, 48)
+    const auto rotaryCentreY = knobs[3]->getBounds().withTrimmedBottom (18).getCentreY();
+    linkButton->setBounds (juce::Rectangle<int> (16, 52)
                                .withCentre ({ (linkLeft + linkRight) / 2,
-                                              knobRow.getCentreY() }));
+                                              rotaryCentreY }));
 
     const auto mixRotary = knobs[2]->getBounds().withTrimmedBottom (18);
     deltaButton->setBounds (juce::Rectangle<int> (32, 32).withCentre (mixRotary.getCentre()));

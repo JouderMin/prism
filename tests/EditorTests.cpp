@@ -123,10 +123,10 @@ public:
                 const auto outputLeft = outputKnob->getBounds().getX();
                 const auto gapMidpoint = 0.5 * static_cast<double> (inputRight + outputLeft);
 
-                expect (linkBounds.getX() >= inputRight,
-                        "LINK must not overlap the INPUT knob");
-                expect (linkBounds.getRight() <= outputLeft,
-                        "LINK must not overlap the OUTPUT knob");
+                expect (linkBounds.getX() >= inputRight + 3,
+                        "LINK must clear the INPUT knob by at least 3 px");
+                expect (linkBounds.getRight() <= outputLeft - 3,
+                        "LINK must clear the OUTPUT knob by at least 3 px");
                 expectWithinAbsoluteError (static_cast<double> (linkBounds.getCentreX()),
                                            gapMidpoint, 2.0);
                 expectGreaterThan (linkBounds.getHeight(), linkBounds.getWidth());
