@@ -60,22 +60,65 @@ AU、VST3、Standalone 均可构建并通过验证：`auval -v aufx Prsm Stgz` �
 
 ### 环境
 
-macOS arm64，Xcode 命令行工具，CMake 3.28 以上，Ninja，vcpkg。
+- macOS arm64：Xcode 命令行工具、CMake 3.28 以上、Ninja、vcpkg。
+- Windows x64：Visual Studio 2022（含“使用 C++ 的桌面开发”）、CMake 3.28 以上、vcpkg；用 Ninja 时在 Developer PowerShell 里运行。
+
+安装 JUCE：
 
 ```sh
+# macOS
 cd ~/vcpkg && ./vcpkg install juce --triplet arm64-osx
+
+# Windows（PowerShell）
+cd $env:VCPKG_ROOT; .\vcpkg install juce --triplet x64-windows
 ```
 
+`CMakePresets.json` 假定 vcpkg 在 `~/vcpkg`。放在别处时，configure 时用 `-DCMAKE_TOOLCHAIN_FILE`（macOS）或 `-DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake`（Windows）显式指定。
+
 ### 构建
+
+macOS 用预设：
 
 ```sh
 cmake --preset debug
 cmake --build --preset debug
 ```
 
-release 把 preset 换成 `release`。产物在 `build/<preset>/Prism*_artefacts/Release/`。
+release 把 preset 换成 `release`。产物在 `build/<preset>/Prism*_artefacts/`。
 
-post-build 拷贝默认关闭（`PRISM_COPY_PLUGINS=OFF`），避免写 `~/Library`。要装到本机就单独构建目标：
+Windows 没有预设，手动传参数；AU 只在 macOS 构建，所以要关掉：
+
+```bat
+cmake -B build/win -G "Visual Studio 17 2022" -A x64 ^
+  -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake ^
+  -DVCPKG_TARGET_TRIPLET=x64-windows ^
+  -DPRISM_BUILD_AU=OFF
+cmake --build build/win --config Release
+```
+
+产物在 `build/win/PrismVST3_artefacts/Release/VST3/PRISM.vst3` 与 `build/win/PrismStandalone_artefacts/Release/Standalone/PRISM.exe`。
+
+### FFT 后端
+
+默认 `PRISM_FFT_BACKEND=pffft`，用 vendored 的 `third_party/pffft`，跨架构稳定。回退到 JUCE 自带的 FFT：
+
+```sh
+cmake --preset debug -DPRISM_FFT_BACKEND=juce
+```
+
+Windows 上 juce 后端的 filterbank 约慢 10 倍、total 约慢 8.5 倍，只在排查问题时用。可选值只有 `pffft` 与 `juce`，写错会在 configure 阶段报错。
+
+### 基准
+
+```sh
+cmake --preset release -DPRISM_BUILD_BENCH=ON
+cmake --build --preset release --target PrismBench
+./build/release/PrismBench
+```
+
+### post-build 拷贝
+
+默认关闭（`PRISM_COPY_PLUGINS=OFF`），避免写 `~/Library`。要装到本机就单独构建目标：
 
 ```sh
 cmake --preset release -DPRISM_COPY_PLUGINS=ON
@@ -86,15 +129,22 @@ cmake --build --preset release --target PrismVST3_VST3
 ### 测试
 
 ```sh
+# macOS
 cmake --build --preset debug --target PrismTests
 ./build/debug/PrismTests
+
+# Windows
+cmake --build build/win --config Release --target PrismTests
+build\win\Release\PrismTests.exe
 ```
 
 测试会刷新 `build/debug/editor-snapshot.png`，可开图核对界面。提交前要求 debug 与 release 各构建一次、测试全过、`src/` 与 `tests/` 无新警告。
 
-GitHub Actions 在 macOS x64 与 Windows x64 上构建并跑测试，同时把编译好的 AU、VST3、Standalone 作为运行产物上传，可从对应运行的 Artifacts 下载。
+GitHub Actions 在 macOS x64 与 Windows x64 上构建并跑测试，同时把编译好的 AU、VST3、Standalone 作为运行产物上传，可从对应运行的 Artifacts 下载。Actions 为手动触发（`workflow_dispatch`）。
 
 ### 安装验证
+
+macOS：
 
 ```sh
 cp -R build/release/PrismAU_artefacts/Release/AU/PRISM.component ~/Library/Audio/Plug-Ins/Components/
@@ -102,4 +152,6 @@ killall -9 AudioComponentRegistrar
 auval -v aufx Prsm Stgz
 ```
 
-不装插件可以直接试听：`build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app`。
+Windows：把 `PRISM.vst3` 整个目录拷进 `C:\Program Files\Common Files\VST3\`（需要管理员权限）。
+
+不装插件可以直接试听：macOS 为 `build/release/PrismStandalone_artefacts/Release/Standalone/PRISM.app`，Windows 为 `build\win\PrismStandalone_artefacts\Release\Standalone\PRISM.exe`。
