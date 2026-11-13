@@ -156,6 +156,11 @@ void PrismAudioProcessorEditor::LinkButton::paintButton (juce::Graphics& g,
         g.drawRoundedRectangle (bounds, 10.0f, 1.2f);
     }
 
+    // 只旋转文字；命中区与裁剪仍由整块按钮 bounds 决定。
+    juce::Graphics::ScopedSaveState saved (g);
+    g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi,
+                                                     bounds.getCentreX(),
+                                                     bounds.getCentreY()));
     g.setColour (on ? findColour (juce::TextButton::textColourOnId)
                     : findColour (juce::TextButton::textColourOffId));
     g.setFont (juce::Font (juce::FontOptions { 10.0f, juce::Font::bold }));
@@ -383,28 +388,31 @@ void PrismAudioProcessorEditor::resized()
     meterArea = inner.removeFromTop (212).reduced (20, 6);
 
     auto knobRow = inner.removeFromBottom (176).reduced (16, 0);
-    constexpr int kLinkSlotWidth = 56;
-    const auto cellWidth = (knobRow.getWidth() - kLinkSlotWidth) / kNumKnobs;
+    const auto columnWidth = static_cast<float> (knobRow.getWidth())
+                             / static_cast<float> (kNumKnobs);
 
+    // 5 列等宽、中心等距；LINK 只占用 INPUT/OUTPUT 旋钮之间的自然空隙。
     for (int i = 0; i < kNumKnobs; ++i)
     {
-        // OUTPUT 前预留 56 px 放 LINK 胶囊，其余四列等宽。
-        const auto columnX = knobRow.getX() + i * cellWidth
-                             + (i == kNumKnobs - 1 ? kLinkSlotWidth : 0);
-        auto cell = juce::Rectangle<int> (columnX, knobRow.getY(), cellWidth, knobRow.getHeight())
+        const auto centreX = static_cast<float> (knobRow.getX())
+                             + (static_cast<float> (i) + 0.5f) * columnWidth;
+        const auto cellWidth = juce::roundToInt (columnWidth);
+        auto cell = juce::Rectangle<int> (juce::roundToInt (centreX) - cellWidth / 2,
+                                          knobRow.getY(),
+                                          cellWidth,
+                                          knobRow.getHeight())
                         .reduced (4, 0);
 
         knobLabels[static_cast<size_t> (i)]->setBounds (cell.removeFromTop (18));
         knobs[static_cast<size_t> (i)]->setBounds (cell.withSizeKeepingCentre (108, 140));
     }
 
-    const auto linkSlot = juce::Rectangle<int> (knobRow.getX() + 4 * cellWidth,
-                                                knobRow.getY(),
-                                                kLinkSlotWidth,
-                                                knobRow.getHeight());
-    const auto knobCentreY = knobs[0]->getBounds().withTrimmedBottom (18).getCentreY();
-    linkButton->setBounds (juce::Rectangle<int> (44, 20)
-                               .withCentre ({ linkSlot.getCentreX(), knobCentreY }));
+    // 竖向 LINK 胶囊居中于 INPUT 右缘与 OUTPUT 左缘之间，命中区就是整钮。
+    const auto linkLeft = knobs[3]->getBounds().getRight();
+    const auto linkRight = knobs[4]->getBounds().getX();
+    linkButton->setBounds (juce::Rectangle<int> (22, 48)
+                               .withCentre ({ (linkLeft + linkRight) / 2,
+                                              knobRow.getCentreY() }));
 
     const auto mixRotary = knobs[2]->getBounds().withTrimmedBottom (18);
     deltaButton->setBounds (juce::Rectangle<int> (32, 32).withCentre (mixRotary.getCentre()));

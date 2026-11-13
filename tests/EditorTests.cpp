@@ -16,6 +16,8 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with PRISM. If not, see <https://www.gnu.org/licenses/>.
 
+#include <algorithm>
+#include <array>
 #include <memory>
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -115,8 +117,54 @@ public:
             {
                 expect (! linkButton->getToggleState());
                 expect (linkButton->isVisible());
-                expect (inputKnob->getBounds().getRight() < linkButton->getBounds().getX());
-                expect (linkButton->getBounds().getRight() < outputKnob->getBounds().getX());
+
+                const auto linkBounds = linkButton->getBounds();
+                const auto inputRight = inputKnob->getBounds().getRight();
+                const auto outputLeft = outputKnob->getBounds().getX();
+                const auto gapMidpoint = 0.5 * static_cast<double> (inputRight + outputLeft);
+
+                expect (linkBounds.getX() >= inputRight,
+                        "LINK must not overlap the INPUT knob");
+                expect (linkBounds.getRight() <= outputLeft,
+                        "LINK must not overlap the OUTPUT knob");
+                expectWithinAbsoluteError (static_cast<double> (linkBounds.getCentreX()),
+                                           gapMidpoint, 2.0);
+                expectGreaterThan (linkBounds.getHeight(), linkBounds.getWidth());
+
+                logMessage ("LINK bounds: " + linkBounds.toString());
+            }
+
+            if (amountKnob != nullptr && spectrumKnob != nullptr && mixKnob != nullptr
+                && inputKnob != nullptr && outputKnob != nullptr)
+            {
+                std::array<juce::Slider*, 5> allKnobs {
+                    amountKnob, spectrumKnob, mixKnob, inputKnob, outputKnob
+                };
+                std::array<int, 5> centres {};
+
+                for (size_t i = 0; i < allKnobs.size(); ++i)
+                    centres[i] = allKnobs[i]->getBounds().getCentreX();
+
+                std::sort (centres.begin(), centres.end());
+
+                const auto firstGap = static_cast<double> (centres[1] - centres[0]);
+                juce::String centreText;
+                juce::String gapText;
+
+                for (size_t i = 0; i < centres.size(); ++i)
+                {
+                    centreText += (i == 0 ? "" : ", ") + juce::String (centres[i]);
+
+                    if (i > 0)
+                        gapText += (i == 1 ? "" : ", ")
+                                 + juce::String (centres[i] - centres[i - 1]);
+                }
+
+                logMessage ("knob centres x: " + centreText + "; gaps: " + gapText);
+
+                for (size_t i = 1; i < centres.size(); ++i)
+                    expectWithinAbsoluteError (static_cast<double> (centres[i] - centres[i - 1]),
+                                               firstGap, 0.5);
             }
 
             expect (amountKnob != nullptr);
