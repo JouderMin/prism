@@ -35,8 +35,8 @@ struct ExpectedParam
     float defaultValue;
 };
 
-// spec 第 6 节：6 个连续参数 + DELTA 开关，顺序固定。
-constexpr std::array<ExpectedParam, 7> kExpectedParams { {
+// spec 第 6 节：6 个连续参数 + DELTA/CLIP 开关，顺序固定。
+constexpr std::array<ExpectedParam, 8> kExpectedParams { {
     { "input", "INPUT", -12.0f, 24.0f, 0.0f },
     { "push", "PUSH", 0.0f, 24.0f, 0.0f },
     { "amount", "AMOUNT", 0.0f, 100.0f, 50.0f },
@@ -44,9 +44,10 @@ constexpr std::array<ExpectedParam, 7> kExpectedParams { {
     { "mix", "MIX", 0.0f, 100.0f, 100.0f },
     { "output", "OUTPUT", -24.0f, 12.0f, 0.0f },
     { "delta", "DELTA", 0.0f, 1.0f, 0.0f },
+    { "clip", "CLIP", 0.0f, 1.0f, 0.0f },
 } };
 
-constexpr std::array<float, 7> kRoundTripValues { { 9.5f, 12.0f, 77.0f, -42.0f, 33.0f, -13.25f, 1.0f } };
+constexpr std::array<float, 8> kRoundTripValues { { 9.5f, 12.0f, 77.0f, -42.0f, 33.0f, -13.25f, 1.0f, 1.0f } };
 
 // 读数格式：33.33 / 12.345 / -0.04 / 最小 / 最大 / 默认 的期望字符串。
 struct FormatCase
@@ -119,7 +120,7 @@ public:
 
     void runTest() override
     {
-        beginTest ("parameter table: 6 continuous params + DELTA with IDs, ranges and defaults from spec 6");
+        beginTest ("parameter table: 6 continuous params + DELTA/CLIP with IDs, ranges and defaults from spec 6");
 
         {
             PrismAudioProcessor processor;
@@ -166,7 +167,7 @@ public:
             }
         }
 
-        beginTest ("state round-trip preserves all seven parameter values");
+        beginTest ("state round-trip preserves all eight parameter values");
 
         {
             PrismAudioProcessor source;
@@ -199,7 +200,7 @@ public:
 
             logMessage ("round-trip values: " + readBack.trim());
 
-            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 5);
         }
 
         beginTest ("bus layout: stereo in/out accepted, mono rejected");
@@ -224,24 +225,28 @@ public:
                     "mono in/out must be rejected");
         }
 
-        beginTest ("APVTS state version is 4 and PUSH/DELTA are automatable");
+        beginTest ("APVTS state version is 5 and PUSH/DELTA/CLIP are automatable");
 
         {
             PrismAudioProcessor processor;
-            expectEquals (static_cast<int> (processor.apvts.state.getProperty ("version")), 4);
+            expectEquals (static_cast<int> (processor.apvts.state.getProperty ("version")), 5);
 
             auto* push = processor.apvts.getParameter ("push");
             auto* delta = processor.apvts.getParameter ("delta");
+            auto* clip = processor.apvts.getParameter ("clip");
             expect (push != nullptr);
             expect (delta != nullptr);
+            expect (clip != nullptr);
 
             if (push != nullptr)
                 expect (push->isAutomatable());
             if (delta != nullptr)
                 expect (delta->isAutomatable());
+            if (clip != nullptr)
+                expect (clip->isAutomatable());
         }
 
-        beginTest ("version 1 state migrates with PUSH and DELTA off");
+        beginTest ("version 1 state migrates with PUSH, DELTA and CLIP off");
 
         {
             // 构造一个 v1 状态：没有 delta/push 子节点，版本属性为 1。
@@ -262,7 +267,8 @@ public:
 
             expectSwitchOff (destination, "delta");
             expectSwitchOff (destination, "push");
-            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
+            expectSwitchOff (destination, "clip");
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 5);
         }
 
         beginTest ("version 2 state keeps DELTA and migrates PUSH off");
@@ -294,7 +300,8 @@ public:
             if (amount != nullptr)
                 expectWithinAbsoluteError (amount->load(), 64.0f, 1.0e-3f);
 
-            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
+            expectSwitchOff (destination, "clip");
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 5);
         }
 
         beginTest ("version 3 state keeps DELTA and migrates PUSH off");
@@ -336,7 +343,48 @@ public:
                 juce::Identifier ("id"), juce::String ("link"));
             expect (! linkChild.isValid(), "migration must remove stale LINK state");
 
-            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
+            expectSwitchOff (destination, "clip");
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 5);
+        }
+
+        beginTest ("version 4 state keeps DELTA and migrates CLIP off");
+
+        {
+            PrismAudioProcessor legacy;
+            legacy.apvts.state.setProperty (juce::Identifier ("version"), 4, nullptr);
+            setParameter (legacy, "amount", 64.0f);
+            setParameter (legacy, "delta", 1.0f);
+            setParameter (legacy, "push", 12.0f);
+            removeStateChild (legacy.apvts.state, "clip");
+
+            juce::MemoryBlock legacyState;
+            legacy.getStateInformation (legacyState);
+
+            PrismAudioProcessor destination;
+            setParameter (destination, "clip", 1.0f);
+            destination.setStateInformation (legacyState.getData(),
+                                              static_cast<int> (legacyState.getSize()));
+
+            expectSwitchOff (destination, "clip");
+
+            const auto* delta = destination.apvts.getRawParameterValue ("delta");
+            const auto* amount = destination.apvts.getRawParameterValue ("amount");
+            const auto* push = destination.apvts.getRawParameterValue ("push");
+            expect (delta != nullptr);
+            expect (amount != nullptr);
+            expect (push != nullptr);
+
+            if (delta != nullptr)
+                expectGreaterThan (delta->load(), 0.5f);
+            if (amount != nullptr)
+                expectWithinAbsoluteError (amount->load(), 64.0f, 1.0e-3f);
+            if (push != nullptr)
+                expectWithinAbsoluteError (push->load(), 12.0f, 1.0e-3f);
+
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 5);
+
+            PrismAudioProcessor fresh;
+            expectSwitchOff (fresh, "clip");
         }
 
         beginTest ("legacy v4 percentage PUSH migrates to 0 dB");
@@ -344,6 +392,7 @@ public:
         {
             PrismAudioProcessor legacy;
             auto legacyTree = legacy.apvts.copyState();
+            legacyTree.setProperty ("version", 4, nullptr);
             auto pushChild = legacyTree.getChildWithProperty (
                 juce::Identifier ("id"), juce::String ("push"));
             expect (pushChild.isValid());
@@ -366,7 +415,7 @@ public:
             if (push != nullptr)
                 expectWithinAbsoluteError (push->load(), 0.0f, 1.0e-4f);
 
-            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 5);
         }
 
         beginTest ("value formatting: 0.1 dB, integer percent, SPECTRUM plus sign");

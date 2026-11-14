@@ -127,6 +127,62 @@ bool PrismAudioProcessorEditor::DeltaButton::hitTest (int x, int y)
     return dx * dx + dy * dy <= 16.0f * 16.0f;
 }
 
+PrismAudioProcessorEditor::SoftClipButton::SoftClipButton()
+    : juce::TextButton ("Soft Clip")
+{
+    setName ("Soft Clip");
+    setTooltip ("Soft Clip");
+    setClickingTogglesState (true);
+    setButtonText ({});
+}
+
+void PrismAudioProcessorEditor::SoftClipButton::paintButton (juce::Graphics& g,
+                                                             bool shouldDrawButtonAsHighlighted,
+                                                             bool)
+{
+    const auto circle = getLocalBounds().toFloat().withSizeKeepingCentre (22.0f, 22.0f);
+    const auto on = getToggleState();
+
+    if (on)
+    {
+        g.setColour (findColour (juce::TextButton::buttonOnColourId));
+        g.fillEllipse (circle);
+    }
+    else
+    {
+        g.setColour (findColour (juce::TextButton::buttonColourId));
+        g.fillEllipse (circle);
+        g.setColour (findColour (juce::TextButton::textColourOffId)
+                         .withAlpha (shouldDrawButtonAsHighlighted ? 1.0f : 0.85f));
+        g.drawEllipse (circle, 1.2f);
+    }
+
+    // 12×9 的“削平正弦”：上升、平顶、下降；不写文字。
+    const auto icon = juce::Rectangle<float> (12.0f, 9.0f).withCentre (circle.getCentre());
+    const auto x = icon.getX();
+    const auto y = icon.getY();
+
+    juce::Path wave;
+    wave.startNewSubPath (x, y + 6.5f);
+    wave.cubicTo (x + 1.5f, y + 2.2f, x + 2.2f, y + 1.5f, x + 3.5f, y + 1.5f);
+    wave.lineTo (x + 8.5f, y + 1.5f);
+    wave.cubicTo (x + 9.8f, y + 1.5f, x + 10.5f, y + 2.2f, x + 12.0f, y + 6.5f);
+
+    g.setColour (on ? findColour (juce::TextButton::textColourOnId)
+                    : findColour (juce::TextButton::textColourOffId));
+    g.strokePath (wave, juce::PathStrokeType (1.8f,
+                                              juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded));
+}
+
+bool PrismAudioProcessorEditor::SoftClipButton::hitTest (int x, int y)
+{
+    const auto centre = getLocalBounds().getCentre();
+    const auto dx = static_cast<float> (x - centre.x);
+    const auto dy = static_cast<float> (y - centre.y);
+    return dx * dx + dy * dy <= 16.0f * 16.0f;
+}
+
 PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& processorToEdit)
     : AudioProcessorEditor (&processorToEdit),
       audioProcessor (processorToEdit)
@@ -197,6 +253,17 @@ PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& proce
 
     deltaAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         audioProcessor.apvts, prism::parameters::delta, *deltaButton);
+
+    // CLIP：PUSH 旋钮中央的 tanh 软削波开关。开时强调色填充、深色图标；关时强调色描边。
+    clipButton = std::make_unique<SoftClipButton>();
+    clipButton->setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    clipButton->setColour (juce::TextButton::buttonOnColourId, accentColour);
+    clipButton->setColour (juce::TextButton::textColourOffId, hintColour);
+    clipButton->setColour (juce::TextButton::textColourOnId, backgroundColour);
+    addAndMakeVisible (*clipButton);
+
+    clipAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        audioProcessor.apvts, prism::parameters::clip, *clipButton);
 
     // 先建好控件再定尺寸，setSize 会触发 resized()。
     setSize (720, 480);
@@ -339,7 +406,7 @@ void PrismAudioProcessorEditor::resized()
     // 与 meterArea 一样左右收 20 px，六列内容与光柱区对齐。
     auto knobRow = inner.removeFromBottom (176).reduced (20, 0);
 
-    // 6 列等宽；用整数列宽 111 保证相邻中心严格等距（664/6 = 110.67）。
+    // 6 列等宽；用整数列宽保证相邻中心严格等距。
     const auto columnWidth = juce::roundToInt (
         static_cast<float> (knobRow.getWidth()) / static_cast<float> (kNumKnobs));
     const auto firstCentreX = knobRow.getX() + columnWidth / 2;
@@ -357,6 +424,9 @@ void PrismAudioProcessorEditor::resized()
         knobLabels[static_cast<size_t> (i)]->setBounds (cell.removeFromTop (18));
         knobs[static_cast<size_t> (i)]->setBounds (cell.withSizeKeepingCentre (108, 140));
     }
+
+    const auto pushRotary = knobs[kPushKnobIndex]->getBounds().withTrimmedBottom (18);
+    clipButton->setBounds (juce::Rectangle<int> (32, 32).withCentre (pushRotary.getCentre()));
 
     const auto mixRotary = knobs[kMixKnobIndex]->getBounds().withTrimmedBottom (18);
     deltaButton->setBounds (juce::Rectangle<int> (32, 32).withCentre (mixRotary.getCentre()));

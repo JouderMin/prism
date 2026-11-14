@@ -66,6 +66,7 @@ public:
             juce::Slider* mixKnob = nullptr;
             juce::Slider* outputKnob = nullptr;
             juce::TextButton* deltaButton = nullptr;
+            juce::TextButton* clipButton = nullptr;
 
             for (int i = 0; i < editor->getNumChildComponents(); ++i)
             {
@@ -93,12 +94,15 @@ public:
                         deltaButton = button;
                     if (button->getName() == "Link")
                         linkButtonFound = true;
+                    if (button->getName() == "Soft Clip")
+                        clipButton = button;
                 }
             }
 
             expectEquals (sliderCount, 6);
             expect (! linkButtonFound, "LINK chain button must be gone");
             expect (deltaButton != nullptr, "DELTA button must exist in the MIX knob");
+            expect (clipButton != nullptr, "CLIP button must exist in the PUSH knob");
 
             if (deltaButton != nullptr && mixKnob != nullptr)
             {
@@ -110,6 +114,18 @@ public:
                     expect (! typed->getTitleRowBoundsForTesting().contains (
                                 deltaButton->getBounds().getCentre()),
                             "DELTA must not live in the title row");
+            }
+
+            if (clipButton != nullptr && pushKnob != nullptr)
+            {
+                expect (! clipButton->getToggleState());
+                expect (clipButton->isVisible());
+                expect (pushKnob->getBounds().contains (clipButton->getBounds().getCentre()),
+                        "CLIP centre must sit inside the PUSH knob bounds");
+                if (auto* typed = dynamic_cast<PrismAudioProcessorEditor*> (editor.get()))
+                    expect (! typed->getTitleRowBoundsForTesting().contains (
+                                clipButton->getBounds().getCentre()),
+                            "CLIP must not live in the title row");
             }
 
             if (inputKnob != nullptr && pushKnob != nullptr && amountKnob != nullptr
@@ -268,6 +284,43 @@ public:
             }
         }
 
+        beginTest ("CLIP button toggles the parameter");
+
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> clipEditor (processor.createEditor());
+            auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (clipEditor.get());
+            expect (typedEditor != nullptr);
+
+            if (typedEditor != nullptr)
+            {
+                auto* button = typedEditor->getClipButtonForTesting();
+                expect (button != nullptr);
+
+                if (button != nullptr)
+                {
+                    expect (! button->getToggleState());
+                    expect (button->getClickingTogglesState());
+
+                    button->setToggleState (true, juce::sendNotification);
+
+                    expect (button->getToggleState(), "toggle must turn CLIP on");
+
+                    auto* clipValue = processor.apvts.getRawParameterValue ("clip");
+                    expect (clipValue != nullptr);
+
+                    if (clipValue != nullptr)
+                        expectGreaterThan (clipValue->load(), 0.5f);
+
+                    button->setToggleState (false, juce::sendNotification);
+
+                    expect (! button->getToggleState(), "second toggle must turn CLIP off");
+
+                    if (clipValue != nullptr)
+                        expectLessThan (clipValue->load(), 0.5f);
+                }
+            }
+        }
+
         beginTest ("editor snapshot is written as 720x480 PNG");
 
         // 截图前把三个读数改成非默认值，便于用快照核对格式。
@@ -282,6 +335,7 @@ public:
         setPlainValue ("spectrum", 25.0f);
         setPlainValue ("amount", 37.0f);
         setPlainValue ("delta", 1.0f);
+        setPlainValue ("clip", 1.0f);
 
         std::unique_ptr<juce::AudioProcessorEditor> snapshotEditor (processor.createEditor());
         expect (snapshotEditor != nullptr);
@@ -316,6 +370,12 @@ public:
 
             if (button != nullptr)
                 expect (button->getToggleState(), "snapshot must show DELTA enabled");
+
+            auto* clip = typedEditor->getClipButtonForTesting();
+            expect (clip != nullptr);
+
+            if (clip != nullptr)
+                expect (clip->getToggleState(), "snapshot must show CLIP enabled");
         }
 
         const auto image = snapshotEditor->createComponentSnapshot (snapshotEditor->getLocalBounds());

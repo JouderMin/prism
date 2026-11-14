@@ -28,7 +28,7 @@
 class PrismAudioProcessor;
 
 // PRISM 主界面：720×480，上面一条标题，中间 7 根光柱，下面 6 个旋钮。
-// DELTA 是 MIX 旋钮中央的圆形开关。
+// DELTA 是 MIX 旋钮中央的圆形开关；CLIP 是 PUSH 旋钮中央的软削波开关。
 // 光柱 30 Hz 从处理器 meters() 读取；旋钮经 SliderAttachment 绑定 APVTS。
 // 全部成员是值或 unique_ptr，不使用裸 new/delete。
 class PrismAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -47,6 +47,7 @@ public:
     juce::Rectangle<int> getTitleRowBoundsForTesting() const noexcept { return titleRowBounds; }
     juce::Rectangle<int> getPrismTextBoundsForTesting() const noexcept { return prismTextBounds; }
     juce::TextButton* getDeltaButtonForTesting() const noexcept { return deltaButton.get(); }
+    juce::TextButton* getClipButtonForTesting() const noexcept { return clipButton.get(); }
     juce::Label* getKnobLabelForTesting (int index) const noexcept
     {
         if (index < 0 || index >= kNumKnobs)
@@ -58,6 +59,7 @@ public:
 private:
     static constexpr int kNumBands = static_cast<int> (prism::kBands.size());
     static constexpr int kNumKnobs = 6;
+    static constexpr int kPushKnobIndex = 1;
     static constexpr int kMixKnobIndex = 4;
 
     // MIX 圆心的圆形 DELTA 开关：命中圆半径 16 px，绘制直径 22 px。
@@ -65,6 +67,16 @@ private:
     {
     public:
         DeltaButton();
+        void paintButton (juce::Graphics& g, bool shouldDrawButtonAsHighlighted,
+                          bool shouldDrawButtonAsDown) override;
+        bool hitTest (int x, int y) override;
+    };
+
+    // PUSH 圆心的 soft clip 开关：命中圆半径 16 px，绘制直径 22 px。
+    class SoftClipButton final : public juce::TextButton
+    {
+    public:
+        SoftClipButton();
         void paintButton (juce::Graphics& g, bool shouldDrawButtonAsHighlighted,
                           bool shouldDrawButtonAsDown) override;
         bool hitTest (int x, int y) override;
@@ -85,6 +97,9 @@ private:
     // MIX 旋钮中央的 DELTA 监听开关；不改变 6 个旋钮的布局。
     std::unique_ptr<DeltaButton> deltaButton;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> deltaAttachment;
+
+    std::unique_ptr<SoftClipButton> clipButton;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> clipAttachment;
 
     juce::Rectangle<int> meterArea;
 

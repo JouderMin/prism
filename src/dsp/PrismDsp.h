@@ -40,12 +40,14 @@ struct EngineParams
     float inputDb = 0.0f;   // -12..+24 dB
     float outputDb = 0.0f;  // -24..+12 dB
     float pushDb = 0.0f;    // 0..24 dB，压缩前额外增益；输出级同步削减
+    bool clip = false;      // true 时在 PUSH 后插入 tanh 软削波
     bool delta = false;     // true 时输出处理差信号（out − 对齐后的干声）
 };
 
 /** 7 段光电压缩器引擎。
 
-    数据流：输入增益 → PUSH 增益 → Filterbank 分频（6 段）→ 第 7 段按恒等式重建
+    数据流：输入增益 → PUSH 增益 → soft clip（CLIP 开启时 tanh）→ Filterbank 分频（6 段）
+    → 第 7 段按恒等式重建
     → 每段光电链路 → 每段 auto-gain → 求和 → 干湿混合 → 输出增益（扣除 PUSH）。
     PUSH 只提高进入压缩器的电平，输出级再减掉同样的 dB，静态净响度不变。
 
@@ -160,6 +162,7 @@ private:
     SmoothedValue inputGain_;
     SmoothedValue pushGain_;
     SmoothedValue outputGain_;
+    SmoothedValue clipMix_;
     SmoothedValue agcTargetDb_;
 
     EngineParams targets_;

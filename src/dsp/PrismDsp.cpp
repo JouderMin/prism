@@ -58,6 +58,7 @@ PrismDsp::PrismDsp()
     inputGain_.snap (1.0f);
     pushGain_.snap (1.0f);
     outputGain_.snap (1.0f);
+    clipMix_.snap (0.0f);
     agcTargetDb_.snap (0.0f);
 
     for (auto& value : autoGainStart_)
@@ -127,6 +128,7 @@ void PrismDsp::prepare (double sampleRate, int maxBlockSize, int numChannels)
     inputGain_.prepare (sampleRate_, kParamSmoothingSeconds);
     pushGain_.prepare (sampleRate_, kParamSmoothingSeconds);
     outputGain_.prepare (sampleRate_, kParamSmoothingSeconds);
+    clipMix_.prepare (sampleRate_, kParamSmoothingSeconds);
     agcTargetDb_.prepare (sampleRate_, kParamSmoothingSeconds);
 
     reset();
@@ -172,6 +174,7 @@ void PrismDsp::reset()
     inputGain_.snapToTarget();
     pushGain_.snapToTarget();
     outputGain_.snapToTarget();
+    clipMix_.snapToTarget();
     agcTargetDb_.snap (-20.0f * std::log10 (juce::jmax (pushGain_.current(), kMinLogGain)));
 }
 
@@ -194,6 +197,7 @@ void PrismDsp::setParams (const EngineParams& params) noexcept
     targets_.inputDb = juce::jlimit (-12.0f, 24.0f, params.inputDb);
     targets_.outputDb = juce::jlimit (-24.0f, 12.0f, params.outputDb);
     targets_.pushDb = juce::jlimit (0.0f, 24.0f, params.pushDb);
+    targets_.clip = params.clip;
     targets_.delta = params.delta;
 
     amount_.setTarget (targets_.amount01);
@@ -201,6 +205,7 @@ void PrismDsp::setParams (const EngineParams& params) noexcept
     mix_.setTarget (targets_.mix01);
     inputGain_.setTarget (decibelsToGain (targets_.inputDb));
     pushGain_.setTarget (decibelsToGain (targets_.pushDb));
+    clipMix_.setTarget (targets_.clip ? 1.0f : 0.0f);
 
     // PUSH 与 OUTPUT 共用 4 ms 平滑：输出级 = outputDb − pushDb。
     // PUSH 前置增益会被输出级等量削减，静态净响度不变。
@@ -218,13 +223,28 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
         return;
     }
 
-    // 第一遍：输入增益 → PUSH 增益，逐样本平滑，写入预分配缓冲，同时作为干声源。
+    // 第一遍：输入增益 → PUSH 增益 → 可选 tanh 软削波，逐样本平滑，
+    // 写入预分配缓冲，同时作为干声源与分频器输入。
     for (int i = 0; i < numSamples; ++i)
     {
         const auto gain = inputGain_.next() * pushGain_.next();
+        const auto clipMix = clipMix_.next();
 
         for (int ch = 0; ch < numChannels; ++ch)
-            inputGainBuffer_.getWritePointer (ch)[i] = buffer.getReadPointer (ch)[i] * gain;
+        {
+            const auto pushed = buffer.getReadPointer (ch)[i] * gain;
+            auto shaped = pushed;
+
+            // 关闭时完全不进 tanh，保证与旧版本逐位一致；开启/关闭用 4 ms 线性交叉淡化。
+            if (clipMix > 0.0f)
+            {
+                const auto clipped = std::tanh (pushed);
+                shaped = clipMix >= 1.0f ? clipped
+                                         : pushed + clipMix * (clipped - pushed);
+            }
+
+            inputGainBuffer_.getWritePointer (ch)[i] = shaped;
+        }
     }
 
     // 分频器要求一块完整输入；用外部指针视图避免拷贝与分配。

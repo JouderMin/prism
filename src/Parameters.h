@@ -24,7 +24,7 @@
 #include <cmath>
 #include <memory>
 
-// PRISM 的 6 个连续参数 + DELTA 开关：ID、范围、默认值集中在这里。
+// PRISM 的 6 个连续参数 + DELTA/CLIP 开关：ID、范围、默认值集中在这里。
 // 曲线是编译期常量（BandTable.h），参数只改驱动量与配比，不改变曲线形状。
 namespace prism
 {
@@ -40,6 +40,7 @@ inline constexpr const char* input = "input";
 inline constexpr const char* output = "output";
 inline constexpr const char* push = "push";
 inline constexpr const char* delta = "delta";
+inline constexpr const char* clip = "clip";
 
 struct Spec
 {
@@ -52,7 +53,7 @@ struct Spec
     int decimals;
 };
 
-// 顺序即界面顺序：INPUT、PUSH、AMOUNT、SPECTRUM、MIX、OUTPUT；DELTA 是开关。
+// 顺序即界面顺序：INPUT、PUSH、AMOUNT、SPECTRUM、MIX、OUTPUT；DELTA/CLIP 是开关。
 // 范围与默认值照 spec 第 6 节。
 inline constexpr std::array<Spec, 6> kSpecs { {
     { input, "INPUT", -12.0f, 24.0f, 0.0f, " dB", 1 },
@@ -96,7 +97,7 @@ inline float parseValue (const Spec& spec, const juce::String& text)
 
 } // namespace parameters
 
-// 建 6 个 AudioParameterFloat + 1 个 AudioParameterBool（DELTA）。
+// 建 6 个 AudioParameterFloat + 2 个 AudioParameterBool（DELTA、CLIP）。
 // 用 make_unique 转移所有权，不写裸 new/delete。
 inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 {
@@ -131,6 +132,11 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     // DELTA 只切换监听差信号，不进入音频曲线；默认关，随状态保存。
     layout.add (std::make_unique<juce::AudioParameterBool> (parameters::delta,
                                                             "DELTA",
+                                                            false));
+
+    // CLIP 在 PUSH 之后插入 tanh 软削波；默认关，随状态保存。
+    layout.add (std::make_unique<juce::AudioParameterBool> (parameters::clip,
+                                                            "CLIP",
                                                             false));
 
     return layout;

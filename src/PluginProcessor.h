@@ -85,6 +85,7 @@ private:
     std::atomic<float>* outputParam = nullptr;
     std::atomic<float>* pushParam = nullptr;
     std::atomic<float>* deltaParam = nullptr;
+    std::atomic<float>* clipParam = nullptr;
 
     double currentSampleRate = 0.0;
     int currentBlockSize = 0;

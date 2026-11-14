@@ -64,6 +64,45 @@ juce::AudioBuffer<float> renderEngine (const prism::EngineParams& params,
     return output;
 }
 
+double toneAmplitude (const juce::AudioBuffer<float>& buffer, int start, int length,
+                      double frequency, int channel)
+{
+    const auto twoPi = juce::MathConstants<double>::twoPi;
+    double real = 0.0;
+    double imag = 0.0;
+
+    for (int i = 0; i < length; ++i)
+    {
+        const auto phase = twoPi * frequency * static_cast<double> (i) / kSampleRate;
+        const auto value = static_cast<double> (buffer.getReadPointer (channel)[start + i]);
+        real += value * std::cos (phase);
+        imag += value * std::sin (phase);
+    }
+
+    return 2.0 * std::sqrt (real * real + imag * imag) / static_cast<double> (length);
+}
+
+double thdPercent (const juce::AudioBuffer<float>& buffer, int start, int length,
+                   double fundamental, int channel)
+{
+    const auto fundamentalAmplitude = toneAmplitude (buffer, start, length, fundamental, channel);
+
+    if (fundamentalAmplitude <= 0.0)
+        return 0.0;
+
+    double harmonicsSquared = 0.0;
+
+    for (int harmonic = 2; harmonic <= 12; ++harmonic)
+    {
+        const auto amplitude = toneAmplitude (buffer, start, length,
+                                              fundamental * static_cast<double> (harmonic),
+                                              channel);
+        harmonicsSquared += amplitude * amplitude;
+    }
+
+    return 100.0 * std::sqrt (harmonicsSquared) / fundamentalAmplitude;
+}
+
 double rmsOf (const juce::AudioBuffer<float>& buffer, int start, int length, int channel)
 {
     double sum = 0.0;
@@ -91,6 +130,7 @@ public:
         testDelta();
         testPush();
         testAgcPushTarget();
+        testSoftClip();
         testSmoothing();
     }
 
@@ -544,6 +584,151 @@ private:
             expectEquals (peakIndex, 1152);
             expectWithinAbsoluteError (peakValue, 1.0f, 1.0e-2f);
         }
+    }
+
+    void testSoftClip()
+    {
+        beginTest ("soft clip: transparent when off, tanh when on, click-free switching");
+
+        // clip 关闭时走纯乘法分支，与旧版本完全相同。
+        prism::EngineParams bypassParams;
+        bypassParams.amount01 = 0.0f;
+        bypassParams.mix01 = 1.0f;
+        bypassParams.clip = false;
+
+        juce::AudioBuffer<float> sine (2, 96000);
+        fillSine (sine, 1000.0, 0.1f);
+
+        const auto bypassA = renderEngine (bypassParams, sine, kProcessBlock);
+        const auto bypassB = renderEngine (bypassParams, sine, kProcessBlock);
+        double bypassDiff = 0.0;
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < sine.getNumSamples(); ++i)
+                bypassDiff = juce::jmax (bypassDiff,
+                                         static_cast<double> (std::abs (
+                                             bypassA.getReadPointer (ch)[i]
+                                             - bypassB.getReadPointer (ch)[i])));
+
+        logMessage ("clip off deterministic difference: " + juce::String (bypassDiff, 12));
+        expectLessThan (bypassDiff, 1.0e-6);
+
+        // 低电平：tanh 近似恒等，THD 增量与电平变化都应很小。
+        prism::EngineParams clipParams = bypassParams;
+        clipParams.clip = true;
+        const auto clipped = renderEngine (clipParams, sine, kProcessBlock);
+        constexpr int kMeasureStart = 96000 - 4800;
+        constexpr int kMeasureLength = 4800;
+
+        const auto thdOff = thdPercent (bypassA, kMeasureStart, kMeasureLength, 1000.0, 0);
+        const auto thdOn = thdPercent (clipped, kMeasureStart, kMeasureLength, 1000.0, 0);
+        const auto rmsOff = rmsOf (bypassA, kMeasureStart, kMeasureLength, 0);
+        const auto rmsOn = rmsOf (clipped, kMeasureStart, kMeasureLength, 0);
+        const auto levelChangeDb = 20.0 * std::log10 (rmsOn / rmsOff);
+
+        logMessage ("low-level clip: THD off " + juce::String (thdOff, 4)
+                    + " %, on " + juce::String (thdOn, 4)
+                    + " %, level change " + juce::String (levelChangeDb, 4) + " dB");
+
+        expectLessThan (std::abs (thdOn - thdOff), 0.5);
+        expectLessThan (std::abs (levelChangeDb), 0.3);
+
+        // 高驱动：PUSH 24 dB + −6 dBFS，输出必须有限且明显削波。
+        prism::EngineParams hotParams = clipParams;
+        hotParams.pushDb = 24.0f;
+        juce::AudioBuffer<float> hotInput (2, 96000);
+        fillSine (hotInput, 1000.0, static_cast<float> (std::pow (10.0, -6.0 / 20.0)));
+        const auto hot = renderEngine (hotParams, hotInput, kProcessBlock);
+
+        bool hotFinite = true;
+        float hotPeak = 0.0f;
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < hot.getNumSamples(); ++i)
+            {
+                const auto value = hot.getReadPointer (ch)[i];
+                hotFinite = hotFinite && std::isfinite (value);
+                hotPeak = juce::jmax (hotPeak, std::abs (value));
+            }
+
+        const auto hotThd = thdPercent (hot, kMeasureStart, kMeasureLength, 1000.0, 0);
+        logMessage ("hot clip: peak " + juce::String (hotPeak, 6)
+                    + ", THD " + juce::String (hotThd, 3) + " %");
+
+        expect (hotFinite, "hot clip output must be finite");
+        expectLessOrEqual (hotPeak, 1.05f);
+        expectGreaterThan (hotThd, 5.0);
+
+        // 开关切换：1 kHz、PUSH 12 dB，切换附近的相邻样本差不得爆音。
+        prism::EngineParams switchParams;
+        switchParams.amount01 = 0.0f;
+        switchParams.mix01 = 1.0f;
+        switchParams.pushDb = 12.0f;
+        switchParams.clip = false;
+
+        prism::PrismDsp switchDsp;
+        switchDsp.setParams (switchParams);
+        switchDsp.prepare (kSampleRate, 128, 2);
+
+        juce::AudioBuffer<float> switchBuffer (2, 48000);
+        fillSine (switchBuffer, 1000.0, 0.5f);
+        constexpr int kSwitchSample = 24000;
+
+        for (int offset = 0; offset < switchBuffer.getNumSamples(); offset += 128)
+        {
+            if (offset == kSwitchSample)
+            {
+                switchParams.clip = true;
+                switchDsp.setParams (switchParams);
+            }
+
+            const auto count = juce::jmin (128, switchBuffer.getNumSamples() - offset);
+            juce::AudioBuffer<float> view (switchBuffer.getArrayOfWritePointers(),
+                                           switchBuffer.getNumChannels(), offset, count);
+            switchDsp.processBlock (view);
+        }
+
+        float maxStep = 0.0f;
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = kSwitchSample - 256; i < kSwitchSample + 512; ++i)
+                maxStep = juce::jmax (maxStep,
+                                      std::abs (switchBuffer.getReadPointer (ch)[i]
+                                                - switchBuffer.getReadPointer (ch)[i - 1]));
+
+        logMessage ("clip switch max adjacent step: " + juce::String (maxStep, 6));
+        expectLessOrEqual (maxStep, 0.35f);
+
+        // 延迟不因 clip 改变：冲激峰值仍在 1152。
+        prism::EngineParams impulseParams;
+        impulseParams.amount01 = 0.0f;
+        impulseParams.mix01 = 1.0f;
+        impulseParams.clip = true;
+
+        juce::AudioBuffer<float> impulse (2, 8192);
+        impulse.clear();
+        impulse.setSample (0, 0, 1.0f);
+        impulse.setSample (1, 0, 1.0f);
+        const auto impulseOut = renderEngine (impulseParams, impulse, kProcessBlock);
+
+        int peakIndex = 0;
+        float peakValue = 0.0f;
+
+        for (int i = 0; i < impulseOut.getNumSamples(); ++i)
+        {
+            const auto value = std::abs (impulseOut.getReadPointer (0)[i]);
+
+            if (value > peakValue)
+            {
+                peakValue = value;
+                peakIndex = i;
+            }
+        }
+
+        logMessage ("clip impulse peak: sample " + juce::String (peakIndex)
+                    + ", value " + juce::String (peakValue, 6));
+        expectEquals (peakIndex, prism::PrismDsp::kLatencySamples);
+        expectGreaterThan (peakValue, 0.7f);
     }
 
     void testSmoothing()

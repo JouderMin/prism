@@ -35,7 +35,7 @@ PrismAudioProcessor::PrismAudioProcessor()
       apvts (*this, nullptr, juce::Identifier ("PRISM"), createParameterLayout())
 {
     // 状态格式版本；将来改布局时靠它做迁移。
-    apvts.state.setProperty (juce::Identifier ("version"), 4, nullptr);
+    apvts.state.setProperty (juce::Identifier ("version"), 5, nullptr);
 
     cacheParameterPointers();
 
@@ -52,6 +52,7 @@ void PrismAudioProcessor::cacheParameterPointers()
     outputParam = apvts.getRawParameterValue (prism::parameters::output);
     pushParam = apvts.getRawParameterValue (prism::parameters::push);
     deltaParam = apvts.getRawParameterValue (prism::parameters::delta);
+    clipParam = apvts.getRawParameterValue (prism::parameters::clip);
 }
 
 void PrismAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -109,6 +110,8 @@ void PrismAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                   : 0.0f;
     params.delta = deltaParam != nullptr
                 && deltaParam->load (std::memory_order_relaxed) > 0.5f;
+    params.clip = clipParam != nullptr
+                && clipParam->load (std::memory_order_relaxed) > 0.5f;
 
     dsp.setParams (params);
     dsp.processBlock (buffer);
@@ -140,8 +143,9 @@ void PrismAudioProcessor::setStateInformation (const void* data, int sizeInBytes
     auto incoming = juce::ValueTree::fromXml (*xml);
     const auto version = static_cast<int> (incoming.getProperty ("version", 1));
 
-    // v4 之前 PUSH 是 0–100 %；当前 v4 的 PUSH 是 0–24 dB。
-    // 旧 v4 状态里的 >24 只可能来自百分比语义，先记下来，替换后归零。
+    // 旧 v4 的 PUSH 是 0–100 %，新 v4 是 0–24 dB。
+    // 两者的 0–24 段数值重叠、无法区分，只能按 dB 保留；只有 >24 才能判定为
+    // 旧百分比语义，先记下来，替换后归零。
     auto legacyV4Push = -1.0f;
 
     if (version == 4)
@@ -176,7 +180,7 @@ void PrismAudioProcessor::setStateInformation (const void* data, int sizeInBytes
             pushParameter->setValueNotifyingHost (0.0f);
     }
 
-    apvts.state.setProperty (juce::Identifier ("version"), 4, nullptr);
+    apvts.state.setProperty (juce::Identifier ("version"), 5, nullptr);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
