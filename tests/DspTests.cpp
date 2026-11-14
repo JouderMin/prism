@@ -128,6 +128,7 @@ public:
         testSilence();
         testLatency();
         testDelta();
+        testDeltaPushMatching();
         testPush();
         testAgcPushTarget();
         testSoftClip();
@@ -343,6 +344,90 @@ private:
 
         logMessage ("MIX=0 DELTA peak: " + juce::String (mixZeroPeak, 12));
         expectLessThan (mixZeroPeak, 1.0e-12f);
+    }
+
+    void testDeltaPushMatching()
+    {
+        beginTest ("DELTA stays gain-matched while PUSH changes the drive level");
+
+        constexpr int kNoiseLength = 16384;
+        constexpr int kSineLength = 48000;
+
+        juce::AudioBuffer<float> noise (2, kNoiseLength);
+        juce::Random random (20261114);
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kNoiseLength; ++i)
+                noise.getWritePointer (ch)[i] = (random.nextFloat() * 2.0f - 1.0f) * 0.25f;
+
+        for (const auto pushDb : { 0.0f, 12.0f, 24.0f })
+        {
+            prism::EngineParams normalParams;
+            normalParams.amount01 = 0.8f;
+            normalParams.mix01 = 1.0f;
+            normalParams.pushDb = pushDb;
+
+            auto dryParams = normalParams;
+            dryParams.amount01 = 0.0f;
+
+            auto deltaParams = normalParams;
+            deltaParams.delta = true;
+
+            const auto normal = renderEngine (normalParams, noise, kProcessBlock);
+            const auto dry = renderEngine (dryParams, noise, kProcessBlock);
+            const auto delta = renderEngine (deltaParams, noise, kProcessBlock);
+
+            double maxDifference = 0.0;
+            double deltaEnergy = 0.0;
+
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < kNoiseLength; ++i)
+                {
+                    const auto expected = static_cast<double> (normal.getReadPointer (ch)[i])
+                                        - static_cast<double> (dry.getReadPointer (ch)[i]);
+                    const auto actual = static_cast<double> (delta.getReadPointer (ch)[i]);
+                    maxDifference = juce::jmax (maxDifference, std::abs (actual - expected));
+                    deltaEnergy += actual * actual;
+                }
+
+            const auto deltaRms = std::sqrt (deltaEnergy
+                                             / static_cast<double> (kNoiseLength * 2));
+            const auto deltaRmsDb = 20.0 * std::log10 (juce::jmax (deltaRms, 1.0e-12));
+
+            logMessage ("PUSH " + juce::String (pushDb, 0) + " dB: DELTA RMS "
+                        + juce::String (deltaRmsDb, 3) + " dBFS, max match error "
+                        + juce::String (maxDifference, 12));
+
+            expectLessThan (maxDifference, 1.0e-6);
+        }
+
+        // AMOUNT=0 时压缩器不工作，PUSH 必须同时被输出级与 DELTA 参考抵消。
+        constexpr float kMinusFortyDbfs = 0.01f;
+        juce::AudioBuffer<float> sine (2, kSineLength);
+        fillSine (sine, 1000.0, kMinusFortyDbfs);
+
+        for (const auto pushDb : { 0.0f, 12.0f, 24.0f })
+        {
+            prism::EngineParams params;
+            params.amount01 = 0.0f;
+            params.mix01 = 1.0f;
+            params.pushDb = pushDb;
+            params.delta = true;
+
+            const auto delta = renderEngine (params, sine, kProcessBlock);
+
+            float peak = 0.0f;
+
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < kSineLength; ++i)
+                    peak = juce::jmax (peak, std::abs (delta.getReadPointer (ch)[i]));
+
+            logMessage ("PUSH " + juce::String (pushDb, 0)
+                        + " dB, AMOUNT=0, -40 dBFS sine: DELTA peak "
+                        + juce::String (peak, 12));
+
+            expectLessThan (peak, 1.0e-5f);
+        }
     }
 
     void testPush()
