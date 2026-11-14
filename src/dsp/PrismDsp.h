@@ -39,7 +39,7 @@ struct EngineParams
     float mix01 = 1.0f;     // 0..1，干湿比
     float inputDb = 0.0f;   // -12..+24 dB
     float outputDb = 0.0f;  // -24..+12 dB
-    bool link = false;      // true 时输出级抵消 inputDb（INPUT/OUTPUT 联动）
+    float push01 = 0.0f;    // 0..1，按比例用 INPUT 抵消输出级增益
     bool delta = false;     // true 时输出处理差信号（out − 对齐后的干声）
 };
 

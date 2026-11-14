@@ -42,7 +42,7 @@ public:
 
     void runTest() override
     {
-        beginTest ("editor opens, binds knobs and closes repeatedly");
+        beginTest ("editor opens, binds six knobs and closes repeatedly");
 
         PrismAudioProcessor processor;
 
@@ -58,13 +58,14 @@ public:
             expectEquals (editor->getHeight(), kEditorHeight);
 
             int sliderCount = 0;
+            bool linkButtonFound = false;
+            juce::Slider* inputKnob = nullptr;
+            juce::Slider* pushKnob = nullptr;
             juce::Slider* amountKnob = nullptr;
             juce::Slider* spectrumKnob = nullptr;
             juce::Slider* mixKnob = nullptr;
-            juce::Slider* inputKnob = nullptr;
             juce::Slider* outputKnob = nullptr;
             juce::TextButton* deltaButton = nullptr;
-            juce::TextButton* linkButton = nullptr;
 
             for (int i = 0; i < editor->getNumChildComponents(); ++i)
             {
@@ -72,18 +73,16 @@ public:
                 {
                     ++sliderCount;
 
-                    if (slider->getName() == "AMOUNT")
-                        amountKnob = slider;
-
-                    if (slider->getName() == "SPECTRUM")
-                        spectrumKnob = slider;
-
-                    if (slider->getName() == "MIX")
-                        mixKnob = slider;
-
                     if (slider->getName() == "INPUT")
                         inputKnob = slider;
-
+                    if (slider->getName() == "PUSH")
+                        pushKnob = slider;
+                    if (slider->getName() == "AMOUNT")
+                        amountKnob = slider;
+                    if (slider->getName() == "SPECTRUM")
+                        spectrumKnob = slider;
+                    if (slider->getName() == "MIX")
+                        mixKnob = slider;
                     if (slider->getName() == "OUTPUT")
                         outputKnob = slider;
                 }
@@ -93,13 +92,13 @@ public:
                     if (button->getName() == "Delta")
                         deltaButton = button;
                     if (button->getName() == "Link")
-                        linkButton = button;
+                        linkButtonFound = true;
                 }
             }
 
-            expectEquals (sliderCount, 5);
+            expectEquals (sliderCount, 6);
+            expect (! linkButtonFound, "LINK chain button must be gone");
             expect (deltaButton != nullptr, "DELTA button must exist in the MIX knob");
-            expect (linkButton != nullptr, "LINK button must sit between INPUT and OUTPUT");
 
             if (deltaButton != nullptr && mixKnob != nullptr)
             {
@@ -110,67 +109,20 @@ public:
                 if (auto* typed = dynamic_cast<PrismAudioProcessorEditor*> (editor.get()))
                     expect (! typed->getTitleRowBoundsForTesting().contains (
                                 deltaButton->getBounds().getCentre()),
-                            "DELTA must no longer live in the title row");
+                            "DELTA must not live in the title row");
             }
 
-            if (linkButton != nullptr)
+            if (inputKnob != nullptr && pushKnob != nullptr && amountKnob != nullptr
+                && spectrumKnob != nullptr && mixKnob != nullptr && outputKnob != nullptr)
             {
-                expect (! linkButton->getToggleState());
-                expect (linkButton->isVisible());
-
-                const auto linkBounds = linkButton->getBounds();
-                expect (linkBounds.getWidth() <= 26,
-                        "LINK must not be the old vertical capsule");
-                expect (linkBounds.getHeight() <= 26,
-                        "LINK must not be the old vertical capsule");
-
-                if (auto* typed = dynamic_cast<PrismAudioProcessorEditor*> (editor.get()))
-                {
-                    auto* inputLabel = typed->getKnobLabelForTesting (3);
-                    auto* outputLabel = typed->getKnobLabelForTesting (4);
-
-                    expect (inputLabel != nullptr);
-                    expect (outputLabel != nullptr);
-
-                    if (inputLabel != nullptr && outputLabel != nullptr)
-                    {
-                        const auto inputBounds = inputLabel->getBounds();
-                        const auto outputBounds = outputLabel->getBounds();
-                        const auto gapMidpoint = 0.5 * static_cast<double> (
-                            inputBounds.getRight() + outputBounds.getX());
-
-                        expect (linkBounds.getX() >= inputBounds.getRight(),
-                                "LINK must sit right of the INPUT label");
-                        expect (linkBounds.getRight() <= outputBounds.getX(),
-                                "LINK must sit left of the OUTPUT label");
-                        expectWithinAbsoluteError (
-                            static_cast<double> (linkBounds.getCentreX()),
-                            gapMidpoint, 2.0);
-                        expect (linkBounds.getCentreY() >= inputBounds.getY()
-                                    && linkBounds.getCentreY() <= inputBounds.getBottom(),
-                                "LINK must be vertically centred in the label row");
-
-                        logMessage ("LINK bounds: " + linkBounds.toString()
-                                    + "; INPUT label: " + inputBounds.toString()
-                                    + "; OUTPUT label: " + outputBounds.toString()
-                                    + "; label gap: "
-                                    + juce::String (outputBounds.getX() - inputBounds.getRight()));
-                    }
-                }
-            }
-
-            if (amountKnob != nullptr && spectrumKnob != nullptr && mixKnob != nullptr
-                && inputKnob != nullptr && outputKnob != nullptr)
-            {
-                std::array<juce::Slider*, 5> allKnobs {
-                    amountKnob, spectrumKnob, mixKnob, inputKnob, outputKnob
+                // 顺序固定为 INPUT、PUSH、AMOUNT、SPECTRUM、MIX、OUTPUT。
+                std::array<juce::Slider*, 6> allKnobs {
+                    inputKnob, pushKnob, amountKnob, spectrumKnob, mixKnob, outputKnob
                 };
-                std::array<int, 5> centres {};
+                std::array<int, 6> centres {};
 
                 for (size_t i = 0; i < allKnobs.size(); ++i)
                     centres[i] = allKnobs[i]->getBounds().getCentreX();
-
-                std::sort (centres.begin(), centres.end());
 
                 const auto firstGap = static_cast<double> (centres[1] - centres[0]);
                 juce::String centreText;
@@ -181,15 +133,18 @@ public:
                     centreText += (i == 0 ? "" : ", ") + juce::String (centres[i]);
 
                     if (i > 0)
+                    {
+                        expectGreaterThan (centres[i], centres[i - 1]);
+                        expectWithinAbsoluteError (
+                            static_cast<double> (centres[i] - centres[i - 1]),
+                            firstGap, 0.5);
                         gapText += (i == 1 ? "" : ", ")
                                  + juce::String (centres[i] - centres[i - 1]);
+                    }
                 }
 
+                expectLessThan (centres.front(), centres.back());
                 logMessage ("knob centres x: " + centreText + "; gaps: " + gapText);
-
-                for (size_t i = 1; i < centres.size(); ++i)
-                    expectWithinAbsoluteError (static_cast<double> (centres[i] - centres[i - 1]),
-                                               firstGap, 0.5);
             }
 
             expect (amountKnob != nullptr);
@@ -199,6 +154,16 @@ public:
                 expectWithinAbsoluteError (amountKnob->getValue(), 50.0, 1.0e-3);
                 expectEquals (amountKnob->getTextFromValue (amountKnob->getValue()),
                               juce::String ("50 %"));
+            }
+
+            expect (pushKnob != nullptr);
+
+            if (pushKnob != nullptr)
+            {
+                expectWithinAbsoluteError (pushKnob->getValue(), 0.0, 1.0e-3);
+                expectEquals (pushKnob->getTextFromValue (0.0), juce::String ("0 %"));
+                expectEquals (pushKnob->getTextFromValue (50.0), juce::String ("50 %"));
+                expectEquals (pushKnob->getTextFromValue (100.0), juce::String ("100 %"));
             }
 
             expect (spectrumKnob != nullptr);
@@ -211,8 +176,6 @@ public:
                 expectEquals (spectrumKnob->getTextFromValue (33.33), juce::String ("+33 %"));
             }
 
-            // SliderAttachment 构造后会覆盖格式化函数；这里确认编辑器在附件之后
-            // 重新装上了 parameters::formatValue，且输入文本也走同一条路径。
             expect (inputKnob != nullptr);
 
             if (inputKnob != nullptr)
@@ -305,36 +268,6 @@ public:
             }
         }
 
-        beginTest ("LINK button toggles the parameter");
-
-        {
-            std::unique_ptr<juce::AudioProcessorEditor> linkEditor (processor.createEditor());
-            auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (linkEditor.get());
-            expect (typedEditor != nullptr);
-
-            if (typedEditor != nullptr)
-            {
-                auto* button = typedEditor->getLinkButtonForTesting();
-                expect (button != nullptr);
-
-                if (button != nullptr)
-                {
-                    expect (! button->getToggleState());
-                    expect (button->getClickingTogglesState());
-                    button->setToggleState (true, juce::sendNotification);
-
-                    auto* linkValue = processor.apvts.getRawParameterValue ("link");
-                    expect (linkValue != nullptr);
-                    if (linkValue != nullptr)
-                        expectGreaterThan (linkValue->load(), 0.5f);
-
-                    button->setToggleState (false, juce::sendNotification);
-                    if (linkValue != nullptr)
-                        expectLessThan (linkValue->load(), 0.5f);
-                }
-            }
-        }
-
         beginTest ("editor snapshot is written as 720x480 PNG");
 
         // 截图前把三个读数改成非默认值，便于用快照核对格式。
@@ -345,10 +278,10 @@ public:
         };
 
         setPlainValue ("input", 3.7f);
+        setPlainValue ("push", 50.0f);
         setPlainValue ("spectrum", 25.0f);
         setPlainValue ("amount", 37.0f);
         setPlainValue ("delta", 1.0f);
-        setPlainValue ("link", 1.0f);
 
         std::unique_ptr<juce::AudioProcessorEditor> snapshotEditor (processor.createEditor());
         expect (snapshotEditor != nullptr);
@@ -371,14 +304,9 @@ public:
 
             if (slider->getName() == "INPUT")
                 expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("3.7 dB"));
-        }
 
-        if (auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (snapshotEditor.get()))
-        {
-            auto* linkButton = typedEditor->getLinkButtonForTesting();
-            expect (linkButton != nullptr);
-            if (linkButton != nullptr)
-                expect (linkButton->getToggleState(), "snapshot must show LINK enabled");
+            if (slider->getName() == "PUSH")
+                expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("50 %"));
         }
 
         if (auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (snapshotEditor.get()))

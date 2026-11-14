@@ -35,7 +35,7 @@ PrismAudioProcessor::PrismAudioProcessor()
       apvts (*this, nullptr, juce::Identifier ("PRISM"), createParameterLayout())
 {
     // 状态格式版本；将来改布局时靠它做迁移。
-    apvts.state.setProperty (juce::Identifier ("version"), 3, nullptr);
+    apvts.state.setProperty (juce::Identifier ("version"), 4, nullptr);
 
     cacheParameterPointers();
 
@@ -50,7 +50,7 @@ void PrismAudioProcessor::cacheParameterPointers()
     mixParam = apvts.getRawParameterValue (prism::parameters::mix);
     inputParam = apvts.getRawParameterValue (prism::parameters::input);
     outputParam = apvts.getRawParameterValue (prism::parameters::output);
-    linkParam = apvts.getRawParameterValue (prism::parameters::link);
+    pushParam = apvts.getRawParameterValue (prism::parameters::push);
     deltaParam = apvts.getRawParameterValue (prism::parameters::delta);
 }
 
@@ -104,8 +104,9 @@ void PrismAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     params.mix01 = mixParam->load (std::memory_order_relaxed) * 0.01f;
     params.inputDb = inputParam->load (std::memory_order_relaxed);
     params.outputDb = outputParam->load (std::memory_order_relaxed);
-    params.link = linkParam != nullptr
-               && linkParam->load (std::memory_order_relaxed) > 0.5f;
+    params.push01 = pushParam != nullptr
+                  ? pushParam->load (std::memory_order_relaxed) * 0.01f
+                  : 0.0f;
     params.delta = deltaParam != nullptr
                 && deltaParam->load (std::memory_order_relaxed) > 0.5f;
 
@@ -141,17 +142,26 @@ void PrismAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 
     apvts.replaceState (incoming);
 
-    // v1 没有 DELTA/LINK；v2 只有 DELTA。旧工程迁移时两个开关都回落到 false，
-    // 不沿用当前界面值，也不丢其它参数。
-    if (version < 3)
+    // v1 没有 DELTA；v2/v3 的 DELTA 读实际值。v1–v3 都还没有 PUSH，
+    // 迁移时 PUSH 回落到 0，LINK 参数已删除，旧状态里的残留节点一并移除。
+    if (version < 2)
     {
         if (auto* deltaParameter = apvts.getParameter (prism::parameters::delta))
             deltaParameter->setValueNotifyingHost (0.0f);
-        if (auto* linkParameter = apvts.getParameter (prism::parameters::link))
-            linkParameter->setValueNotifyingHost (0.0f);
     }
 
-    apvts.state.setProperty (juce::Identifier ("version"), 3, nullptr);
+    if (version < 4)
+    {
+        if (auto* pushParameter = apvts.getParameter (prism::parameters::push))
+            pushParameter->setValueNotifyingHost (0.0f);
+
+        const auto linkChild = apvts.state.getChildWithProperty (
+            juce::Identifier ("id"), juce::String ("link"));
+        if (linkChild.isValid())
+            apvts.state.removeChild (linkChild, nullptr);
+    }
+
+    apvts.state.setProperty (juce::Identifier ("version"), 4, nullptr);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

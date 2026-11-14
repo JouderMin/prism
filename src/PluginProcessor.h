@@ -83,7 +83,7 @@ private:
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* inputParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
-    std::atomic<float>* linkParam = nullptr;
+    std::atomic<float>* pushParam = nullptr;
     std::atomic<float>* deltaParam = nullptr;
 
     double currentSampleRate = 0.0;

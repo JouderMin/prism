@@ -127,56 +127,6 @@ bool PrismAudioProcessorEditor::DeltaButton::hitTest (int x, int y)
     return dx * dx + dy * dy <= 16.0f * 16.0f;
 }
 
-PrismAudioProcessorEditor::LinkButton::LinkButton()
-    : juce::TextButton ("LINK")
-{
-    setName ("Link");
-    setTooltip ("Link input and output gains");
-    setClickingTogglesState (true);
-}
-
-void PrismAudioProcessorEditor::LinkButton::paintButton (juce::Graphics& g,
-                                                         bool shouldDrawButtonAsHighlighted,
-                                                         bool)
-{
-    // 两个 45° 斜置的圆角矩形环，沿长轴错开 9 px（环长 11 px，咬合 2 px）。
-    const auto centre = getLocalBounds().toFloat().getCentre();
-    const auto on = getToggleState();
-    constexpr float ringWidth = 5.0f;
-    constexpr float ringLength = 11.0f;
-    constexpr float axisOffset = 4.5f;
-    constexpr float diagonal = 0.70710678f;
-
-    const auto strokeColour = on
-        ? findColour (juce::TextButton::buttonOnColourId)
-        : findColour (juce::TextButton::textColourOffId)
-              .withAlpha (shouldDrawButtonAsHighlighted ? 1.0f : 0.85f);
-
-    for (int i = 0; i < 2; ++i)
-    {
-        const auto offset = (i == 0 ? -axisOffset : axisOffset);
-        const auto dx = offset * diagonal;
-
-        juce::Path ring;
-        ring.addRoundedRectangle (-ringWidth * 0.5f, -ringLength * 0.5f,
-                                  ringWidth, ringLength, ringWidth * 0.5f);
-        ring.applyTransform (juce::AffineTransform::rotation (
-                                 juce::MathConstants<float>::pi * 0.25f)
-                                 .translated (centre.x + dx, centre.y + dx));
-
-        if (on)
-        {
-            g.setColour (strokeColour.withAlpha (0.20f));
-            g.fillPath (ring);
-        }
-
-        g.setColour (strokeColour);
-        g.strokePath (ring, juce::PathStrokeType (1.8f,
-                                                  juce::PathStrokeType::curved,
-                                                  juce::PathStrokeType::rounded));
-    }
-}
-
 PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& processorToEdit)
     : AudioProcessorEditor (&processorToEdit),
       audioProcessor (processorToEdit)
@@ -247,16 +197,6 @@ PrismAudioProcessorEditor::PrismAudioProcessorEditor (PrismAudioProcessor& proce
 
     deltaAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         audioProcessor.apvts, prism::parameters::delta, *deltaButton);
-
-    // LINK：INPUT 与 OUTPUT 之间的胶囊开关。开时强调色填充 + 深色字，关时强调色描边。
-    linkButton = std::make_unique<LinkButton>();
-    linkButton->setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-    linkButton->setColour (juce::TextButton::buttonOnColourId, accentColour);
-    linkButton->setColour (juce::TextButton::textColourOffId, hintColour);
-    addAndMakeVisible (*linkButton);
-
-    linkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
-        audioProcessor.apvts, prism::parameters::link, *linkButton);
 
     // 先建好控件再定尺寸，setSize 会触发 resized()。
     setSize (720, 480);
@@ -396,35 +336,29 @@ void PrismAudioProcessorEditor::resized()
 
     meterArea = inner.removeFromTop (212).reduced (20, 6);
 
-    auto knobRow = inner.removeFromBottom (176).reduced (16, 0);
-    const auto columnWidth = static_cast<float> (knobRow.getWidth())
-                             / static_cast<float> (kNumKnobs);
+    // 与 meterArea 一样左右收 20 px，六列内容与光柱区对齐。
+    auto knobRow = inner.removeFromBottom (176).reduced (20, 0);
 
-    // 5 列等宽、中心等距；LINK 只占用 INPUT/OUTPUT 旋钮之间的自然空隙。
+    // 6 列等宽；用整数列宽 111 保证相邻中心严格等距（664/6 = 110.67）。
+    const auto columnWidth = juce::roundToInt (
+        static_cast<float> (knobRow.getWidth()) / static_cast<float> (kNumKnobs));
+    const auto firstCentreX = knobRow.getX() + columnWidth / 2;
+
     for (int i = 0; i < kNumKnobs; ++i)
     {
-        const auto centreX = static_cast<float> (knobRow.getX())
-                             + (static_cast<float> (i) + 0.5f) * columnWidth;
-        const auto cellWidth = juce::roundToInt (columnWidth);
-        auto cell = juce::Rectangle<int> (juce::roundToInt (centreX) - cellWidth / 2,
+        const auto centreX = firstCentreX + i * columnWidth;
+        auto cell = juce::Rectangle<int> (centreX - columnWidth / 2,
                                           knobRow.getY(),
-                                          cellWidth,
+                                          columnWidth,
                                           knobRow.getHeight())
                         .reduced (4, 0);
 
-        // 标签两侧各收 20 px，为 INPUT/OUTPUT 之间的锁链图标留出空隙；文字仍居中。
-        knobLabels[static_cast<size_t> (i)]->setBounds (cell.removeFromTop (18).reduced (20, 0));
+        // 标签按列宽居中；PUSH 与其它百分比旋钮共用同一条格式化路径。
+        knobLabels[static_cast<size_t> (i)]->setBounds (cell.removeFromTop (18));
         knobs[static_cast<size_t> (i)]->setBounds (cell.withSizeKeepingCentre (108, 140));
     }
 
-    // 锁链图标位于 INPUT/OUTPUT 标签之间，垂直与标签文字居中；命中区 24×24。
-    const auto inputLabel = knobLabels[3]->getBounds();
-    const auto outputLabel = knobLabels[4]->getBounds();
-    linkButton->setBounds (juce::Rectangle<int> (24, 24)
-                               .withCentre ({ (inputLabel.getRight() + outputLabel.getX()) / 2,
-                                              inputLabel.getCentreY() }));
-
-    const auto mixRotary = knobs[2]->getBounds().withTrimmedBottom (18);
+    const auto mixRotary = knobs[kMixKnobIndex]->getBounds().withTrimmedBottom (18);
     deltaButton->setBounds (juce::Rectangle<int> (32, 32).withCentre (mixRotary.getCentre()));
 }
 

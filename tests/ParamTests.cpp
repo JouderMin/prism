@@ -35,21 +35,20 @@ struct ExpectedParam
     float defaultValue;
 };
 
-// spec 第 6 节：5 个连续参数 + LINK/DELTA 两个开关，顺序固定。
+// spec 第 6 节：6 个连续参数 + DELTA 开关，顺序固定。
 constexpr std::array<ExpectedParam, 7> kExpectedParams { {
+    { "input", "INPUT", -12.0f, 24.0f, 0.0f },
+    { "push", "PUSH", 0.0f, 100.0f, 0.0f },
     { "amount", "AMOUNT", 0.0f, 100.0f, 50.0f },
     { "spectrum", "SPECTRUM", -100.0f, 100.0f, 0.0f },
     { "mix", "MIX", 0.0f, 100.0f, 100.0f },
-    { "input", "INPUT", -12.0f, 24.0f, 0.0f },
-    { "link", "LINK", 0.0f, 1.0f, 0.0f },
     { "output", "OUTPUT", -24.0f, 12.0f, 0.0f },
     { "delta", "DELTA", 0.0f, 1.0f, 0.0f },
 } };
 
-constexpr std::array<float, 7> kRoundTripValues { { 77.0f, -42.0f, 33.0f, 9.5f, 1.0f, -13.25f, 1.0f } };
+constexpr std::array<float, 7> kRoundTripValues { { 9.5f, 37.0f, 77.0f, -42.0f, 33.0f, -13.25f, 1.0f } };
 
 // 读数格式：33.33 / 12.345 / -0.04 / 最小 / 最大 / 默认 的期望字符串。
-// 33.33 对 INPUT/OUTPUT 超出范围，只用于 formatValue 纯函数；参数 getText 会先夹取。
 struct FormatCase
 {
     const char* id;
@@ -57,15 +56,17 @@ struct FormatCase
     std::array<const char*, 6> expected;
 };
 
-constexpr std::array<FormatCase, 5> kFormatCases { {
+constexpr std::array<FormatCase, 6> kFormatCases { {
+    { "input",    { 33.33f, 12.345f, -0.04f, -12.0f, 24.0f, 0.0f },
+                  { "33.3 dB", "12.3 dB", "0.0 dB", "-12.0 dB", "24.0 dB", "0.0 dB" } },
+    { "push",     { 33.33f, 12.345f, -0.04f, 0.0f, 100.0f, 0.0f },
+                  { "33 %", "12 %", "0 %", "0 %", "100 %", "0 %" } },
     { "amount",   { 33.33f, 12.345f, -0.04f, 0.0f, 100.0f, 50.0f },
                   { "33 %", "12 %", "0 %", "0 %", "100 %", "50 %" } },
     { "spectrum", { 33.33f, 12.345f, -0.04f, -100.0f, 100.0f, 0.0f },
                   { "+33 %", "+12 %", "0 %", "-100 %", "+100 %", "0 %" } },
     { "mix",      { 33.33f, 12.345f, -0.04f, 0.0f, 100.0f, 100.0f },
                   { "33 %", "12 %", "0 %", "0 %", "100 %", "100 %" } },
-    { "input",    { 33.33f, 12.345f, -0.04f, -12.0f, 24.0f, 0.0f },
-                  { "33.3 dB", "12.3 dB", "0.0 dB", "-12.0 dB", "24.0 dB", "0.0 dB" } },
     { "output",   { 33.33f, 12.345f, -0.04f, -24.0f, 12.0f, 0.0f },
                   { "33.3 dB", "12.3 dB", "0.0 dB", "-24.0 dB", "12.0 dB", "0.0 dB" } },
 } };
@@ -89,6 +90,23 @@ juce::AudioProcessor::BusesLayout makeLayout (const juce::AudioChannelSet& input
     return layout;
 }
 
+const prism::parameters::Spec* findSpec (const char* id)
+{
+    for (const auto& spec : prism::parameters::kSpecs)
+        if (juce::String (spec.id) == juce::String (id))
+            return &spec;
+
+    return nullptr;
+}
+
+void removeStateChild (juce::ValueTree& state, const char* id)
+{
+    const auto child = state.getChildWithProperty (juce::Identifier ("id"), juce::String (id));
+
+    if (child.isValid())
+        state.removeChild (child, nullptr);
+}
+
 } // namespace
 
 class ParamTests final : public juce::UnitTest
@@ -101,7 +119,7 @@ public:
 
     void runTest() override
     {
-        beginTest ("parameter table: 5 continuous params + LINK/DELTA with IDs, ranges and defaults from spec 6");
+        beginTest ("parameter table: 6 continuous params + DELTA with IDs, ranges and defaults from spec 6");
 
         {
             PrismAudioProcessor processor;
@@ -113,6 +131,11 @@ public:
             for (size_t i = 0; i < kExpectedParams.size(); ++i)
                 expectEquals (parameters[static_cast<int> (i)]->getName (64),
                               juce::String (kExpectedParams[i].name));
+
+            // kSpecs 的顺序就是参数数组与界面的顺序。
+            for (size_t i = 0; i < prism::parameters::kSpecs.size(); ++i)
+                expectEquals (juce::String (prism::parameters::kSpecs[i].id),
+                              juce::String (kExpectedParams[i].id));
 
             for (const auto& expected : kExpectedParams)
             {
@@ -130,6 +153,15 @@ public:
                 expectWithinAbsoluteError (plainDefault, expected.defaultValue, 1.0e-4f);
 
                 expectEquals (parameter->getName (64), juce::String (expected.name));
+            }
+
+            auto* push = processor.apvts.getParameter ("push");
+            expect (push != nullptr);
+            if (push != nullptr)
+            {
+                expectEquals (push->getText (0.0f, 0), juce::String ("0 %"));
+                expectEquals (push->getText (0.5f, 0), juce::String ("50 %"));
+                expectEquals (push->getText (1.0f, 0), juce::String ("100 %"));
             }
         }
 
@@ -166,8 +198,7 @@ public:
 
             logMessage ("round-trip values: " + readBack.trim());
 
-            // 版本属性也要随状态一起往返；LINK 是 v3 新增。
-            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 3);
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
         }
 
         beginTest ("bus layout: stereo in/out accepted, mono rejected");
@@ -192,98 +223,119 @@ public:
                     "mono in/out must be rejected");
         }
 
-        beginTest ("APVTS state version is 3 and LINK/DELTA are automatable");
+        beginTest ("APVTS state version is 4 and PUSH/DELTA are automatable");
 
         {
             PrismAudioProcessor processor;
-            expectEquals (static_cast<int> (processor.apvts.state.getProperty ("version")), 3);
+            expectEquals (static_cast<int> (processor.apvts.state.getProperty ("version")), 4);
 
+            auto* push = processor.apvts.getParameter ("push");
             auto* delta = processor.apvts.getParameter ("delta");
-            auto* link = processor.apvts.getParameter ("link");
+            expect (push != nullptr);
             expect (delta != nullptr);
-            expect (link != nullptr);
 
+            if (push != nullptr)
+                expect (push->isAutomatable());
             if (delta != nullptr)
                 expect (delta->isAutomatable());
-            if (link != nullptr)
-                expect (link->isAutomatable());
         }
 
-        beginTest ("version 1 state migrates with DELTA and LINK off");
+        beginTest ("version 1 state migrates with PUSH and DELTA off");
 
         {
-            // 构造一个 v1 状态：没有 delta/link 子节点，版本属性为 1。
+            // 构造一个 v1 状态：没有 delta/push 子节点，版本属性为 1。
             PrismAudioProcessor legacy;
             legacy.apvts.state.setProperty (juce::Identifier ("version"), 1, nullptr);
-
-            for (const auto* id : { "delta", "link" })
-            {
-                auto child = legacy.apvts.state.getChildWithProperty (
-                    juce::Identifier ("id"), juce::String (id));
-
-                if (child.isValid())
-                    legacy.apvts.state.removeChild (child, nullptr);
-            }
+            removeStateChild (legacy.apvts.state, "delta");
+            removeStateChild (legacy.apvts.state, "push");
 
             juce::MemoryBlock legacyState;
             legacy.getStateInformation (legacyState);
 
             PrismAudioProcessor destination;
             setParameter (destination, "delta", 1.0f);
-            setParameter (destination, "link", 1.0f);
+            setParameter (destination, "push", 50.0f);
 
             destination.setStateInformation (legacyState.getData(),
                                               static_cast<int> (legacyState.getSize()));
 
-            for (const auto* id : { "delta", "link" })
-            {
-                const auto* value = destination.apvts.getRawParameterValue (id);
-                expect (value != nullptr);
-                if (value != nullptr)
-                    expectLessThan (value->load(), 0.5f);
-            }
-
-            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 3);
+            expectSwitchOff (destination, "delta");
+            expectSwitchOff (destination, "push");
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
         }
 
-        beginTest ("version 2 state migrates LINK off without losing other values");
+        beginTest ("version 2 state keeps DELTA and migrates PUSH off");
 
         {
-            // v2 状态有 delta、没有 link；迁移后 delta/link 都回落 false，其它值保留。
             PrismAudioProcessor legacy;
             legacy.apvts.state.setProperty (juce::Identifier ("version"), 2, nullptr);
             setParameter (legacy, "amount", 64.0f);
             setParameter (legacy, "delta", 1.0f);
-
-            auto linkChild = legacy.apvts.state.getChildWithProperty (
-                juce::Identifier ("id"), juce::String ("link"));
-
-            if (linkChild.isValid())
-                legacy.apvts.state.removeChild (linkChild, nullptr);
+            removeStateChild (legacy.apvts.state, "push");
 
             juce::MemoryBlock legacyState;
             legacy.getStateInformation (legacyState);
 
             PrismAudioProcessor destination;
-            setParameter (destination, "link", 1.0f);
+            setParameter (destination, "push", 50.0f);
             destination.setStateInformation (legacyState.getData(),
                                               static_cast<int> (legacyState.getSize()));
 
-            const auto* linkValue = destination.apvts.getRawParameterValue ("link");
-            const auto* deltaValue = destination.apvts.getRawParameterValue ("delta");
-            const auto* amountValue = destination.apvts.getRawParameterValue ("amount");
-            expect (linkValue != nullptr);
-            expect (deltaValue != nullptr);
-            expect (amountValue != nullptr);
+            expectSwitchOff (destination, "push");
 
-            if (linkValue != nullptr)
-                expectLessThan (linkValue->load(), 0.5f);
-            if (deltaValue != nullptr)
-                expectLessThan (deltaValue->load(), 0.5f);
-            if (amountValue != nullptr)
-                expectWithinAbsoluteError (amountValue->load(), 64.0f, 1.0e-3f);
+            const auto* delta = destination.apvts.getRawParameterValue ("delta");
+            const auto* amount = destination.apvts.getRawParameterValue ("amount");
+            expect (delta != nullptr);
+            expect (amount != nullptr);
 
-            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 3);
+            if (delta != nullptr)
+                expectGreaterThan (delta->load(), 0.5f);
+            if (amount != nullptr)
+                expectWithinAbsoluteError (amount->load(), 64.0f, 1.0e-3f);
+
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
+        }
+
+        beginTest ("version 3 state keeps DELTA and migrates PUSH off");
+
+        {
+            PrismAudioProcessor legacy;
+            legacy.apvts.state.setProperty (juce::Identifier ("version"), 3, nullptr);
+            setParameter (legacy, "amount", 64.0f);
+            setParameter (legacy, "delta", 1.0f);
+            removeStateChild (legacy.apvts.state, "push");
+
+            // v3 状态可能带已删除的 LINK 节点；迁移应移除它。
+            juce::ValueTree linkNode ("PARAM");
+            linkNode.setProperty ("id", "link", nullptr);
+            linkNode.setProperty ("value", 1.0, nullptr);
+            legacy.apvts.state.appendChild (linkNode, nullptr);
+
+            juce::MemoryBlock legacyState;
+            legacy.getStateInformation (legacyState);
+
+            PrismAudioProcessor destination;
+            setParameter (destination, "push", 50.0f);
+            destination.setStateInformation (legacyState.getData(),
+                                              static_cast<int> (legacyState.getSize()));
+
+            expectSwitchOff (destination, "push");
+
+            const auto* delta = destination.apvts.getRawParameterValue ("delta");
+            const auto* amount = destination.apvts.getRawParameterValue ("amount");
+            expect (delta != nullptr);
+            expect (amount != nullptr);
+
+            if (delta != nullptr)
+                expectGreaterThan (delta->load(), 0.5f);
+            if (amount != nullptr)
+                expectWithinAbsoluteError (amount->load(), 64.0f, 1.0e-3f);
+
+            const auto linkChild = destination.apvts.state.getChildWithProperty (
+                juce::Identifier ("id"), juce::String ("link"));
+            expect (! linkChild.isValid(), "migration must remove stale LINK state");
+
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
         }
 
         beginTest ("value formatting: 0.1 dB, integer percent, SPECTRUM plus sign");
@@ -293,12 +345,7 @@ public:
 
             for (const auto& formatCase : kFormatCases)
             {
-                const prism::parameters::Spec* spec = nullptr;
-
-                for (const auto& candidate : prism::parameters::kSpecs)
-                    if (juce::String (candidate.id) == juce::String (formatCase.id))
-                        spec = &candidate;
-
+                const auto* spec = findSpec (formatCase.id);
                 expect (spec != nullptr, juce::String ("missing spec ") + formatCase.id);
 
                 if (spec == nullptr)
@@ -329,14 +376,33 @@ public:
             }
 
             // 文本回读：单位与 "+" 都要能吃进去。
-            const auto& spectrumSpec = prism::parameters::kSpecs[1];
-            const auto& inputSpec = prism::parameters::kSpecs[3];
+            const auto* spectrumSpec = findSpec ("spectrum");
+            const auto* inputSpec = findSpec ("input");
+            expect (spectrumSpec != nullptr);
+            expect (inputSpec != nullptr);
 
-            expectWithinAbsoluteError (prism::parameters::parseValue (inputSpec, "3.7 dB"), 3.7f, 1.0e-5f);
-            expectWithinAbsoluteError (prism::parameters::parseValue (inputSpec, "+12.0 dB"), 12.0f, 1.0e-5f);
-            expectWithinAbsoluteError (prism::parameters::parseValue (spectrumSpec, "+25 %"), 25.0f, 1.0e-5f);
-            expectWithinAbsoluteError (prism::parameters::parseValue (spectrumSpec, "-50 %"), -50.0f, 1.0e-5f);
+            if (spectrumSpec != nullptr)
+            {
+                expectWithinAbsoluteError (prism::parameters::parseValue (*spectrumSpec, "+25 %"), 25.0f, 1.0e-5f);
+                expectWithinAbsoluteError (prism::parameters::parseValue (*spectrumSpec, "-50 %"), -50.0f, 1.0e-5f);
+            }
+
+            if (inputSpec != nullptr)
+            {
+                expectWithinAbsoluteError (prism::parameters::parseValue (*inputSpec, "3.7 dB"), 3.7f, 1.0e-5f);
+                expectWithinAbsoluteError (prism::parameters::parseValue (*inputSpec, "+12.0 dB"), 12.0f, 1.0e-5f);
+            }
         }
+    }
+
+private:
+    void expectSwitchOff (PrismAudioProcessor& processor, const char* id)
+    {
+        const auto* value = processor.apvts.getRawParameterValue (id);
+        expect (value != nullptr, juce::String ("missing raw value ") + id);
+
+        if (value != nullptr)
+            expectLessThan (value->load(), 0.5f);
     }
 };
 

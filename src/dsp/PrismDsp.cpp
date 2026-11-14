@@ -176,7 +176,7 @@ void PrismDsp::setParams (const EngineParams& params) noexcept
     targets_.mix01 = juce::jlimit (0.0f, 1.0f, params.mix01);
     targets_.inputDb = juce::jlimit (-12.0f, 24.0f, params.inputDb);
     targets_.outputDb = juce::jlimit (-24.0f, 12.0f, params.outputDb);
-    targets_.link = params.link;
+    targets_.push01 = juce::jlimit (0.0f, 1.0f, params.push01);
     targets_.delta = params.delta;
 
     amount_.setTarget (targets_.amount01);
@@ -184,10 +184,10 @@ void PrismDsp::setParams (const EngineParams& params) noexcept
     mix_.setTarget (targets_.mix01);
     inputGain_.setTarget (decibelsToGain (targets_.inputDb));
 
-    // LINK 与 OUTPUT 共用同一个 4 ms 线性平滑器：有效输出 dB =
-    // outputDb − (link ? inputDb : 0)，打开时正好抵消 INPUT 的增益。
+    // PUSH 与 OUTPUT 共用同一个 4 ms 线性平滑器：有效输出 dB =
+    // outputDb − push01·inputDb，100% 时正好抵消 INPUT 的增益。
     outputGain_.setTarget (decibelsToGain (targets_.outputDb
-                                           - (targets_.link ? targets_.inputDb : 0.0f)));
+                                           - targets_.push01 * targets_.inputDb));
 }
 
 void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept

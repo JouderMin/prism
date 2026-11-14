@@ -89,7 +89,7 @@ public:
         testSilence();
         testLatency();
         testDelta();
-        testLink();
+        testPush();
         testSmoothing();
     }
 
@@ -304,9 +304,9 @@ private:
         expectLessThan (mixZeroPeak, 1.0e-12f);
     }
 
-    void testLink()
+    void testPush()
     {
-        beginTest ("LINK makes OUTPUT cancel INPUT gain at the output stage");
+        beginTest ("PUSH blends INPUT gain out of the output stage");
 
         constexpr int kLength = 48000;
 
@@ -326,26 +326,26 @@ private:
         params.mix01 = 1.0f;
         params.inputDb = 6.0f;
 
-        params.link = false;
-        const auto unlinkedDb = measureGainDb (params);
-        logMessage ("LINK off, INPUT +6 dB: " + juce::String (unlinkedDb, 3) + " dB");
-        expectWithinAbsoluteError (unlinkedDb, 6.0, 0.01);
+        params.push01 = 0.0f;
+        const auto push0Db = measureGainDb (params);
+        logMessage ("PUSH 0 %, INPUT +6 dB: " + juce::String (push0Db, 3) + " dB");
+        expectWithinAbsoluteError (push0Db, 6.0, 0.01);
 
-        params.link = true;
-        const auto linkedDb = measureGainDb (params);
-        const auto linkedOutputStageDb = linkedDb - params.inputDb;
-        logMessage ("LINK on, INPUT +6 dB: net " + juce::String (linkedDb, 3)
-                    + " dB, output stage " + juce::String (linkedOutputStageDb, 3) + " dB");
-        expectWithinAbsoluteError (linkedDb, 0.0, 0.01);
-        expectWithinAbsoluteError (linkedOutputStageDb, -6.0, 0.01);
+        params.push01 = 1.0f;
+        const auto push100Db = measureGainDb (params);
+        const auto push100OutputStageDb = push100Db - params.inputDb;
+        logMessage ("PUSH 100 %, INPUT +6 dB: net " + juce::String (push100Db, 3)
+                    + " dB, output stage " + juce::String (push100OutputStageDb, 3) + " dB");
+        expectWithinAbsoluteError (push100Db, 0.0, 0.01);
+        expectWithinAbsoluteError (push100OutputStageDb, -6.0, 0.01);
 
-        params.inputDb = 3.7f;
-        const auto linked37Db = measureGainDb (params);
-        const auto linked37OutputStageDb = linked37Db - params.inputDb;
-        logMessage ("LINK on, INPUT +3.7 dB: net " + juce::String (linked37Db, 3)
-                    + " dB, output stage " + juce::String (linked37OutputStageDb, 3) + " dB");
-        expectWithinAbsoluteError (linked37Db, 0.0, 0.01);
-        expectWithinAbsoluteError (linked37OutputStageDb, -3.7, 0.01);
+        params.push01 = 0.5f;
+        const auto push50Db = measureGainDb (params);
+        const auto push50OutputStageDb = push50Db - params.inputDb;
+        logMessage ("PUSH 50 %, INPUT +6 dB: net " + juce::String (push50Db, 3)
+                    + " dB, output stage " + juce::String (push50OutputStageDb, 3) + " dB");
+        expectWithinAbsoluteError (push50Db, 3.0, 0.02);
+        expectWithinAbsoluteError (push50OutputStageDb, -3.0, 0.02);
     }
 
     void testSmoothing()
