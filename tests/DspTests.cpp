@@ -306,46 +306,79 @@ private:
 
     void testPush()
     {
-        beginTest ("PUSH blends INPUT gain out of the output stage");
+        beginTest ("PUSH is an extra gain stage cancelled at the output");
 
         constexpr int kLength = 48000;
+        constexpr int kMeasureStart = kLength - 24000;
 
-        juce::AudioBuffer<float> input (2, kLength);
-        fillSine (input, 1000.0, 0.1f);
-
-        const auto inputRms = rmsOf (input, kLength - 24000, 24000, 0);
-        const auto measureGainDb = [&] (const prism::EngineParams& params)
+        const auto renderLevelDb = [] (const prism::EngineParams& params, float amplitude)
         {
+            juce::AudioBuffer<float> input (2, kLength);
+            fillSine (input, 1000.0, amplitude);
             const auto output = renderEngine (params, input, kProcessBlock);
-            const auto outputRms = rmsOf (output, kLength - 24000, 24000, 0);
-            return 20.0 * std::log10 (outputRms / inputRms);
+            const auto level = rmsOf (output, kMeasureStart, 24000, 0);
+            return 20.0 * std::log10 (juce::jmax (level, 1.0e-12));
         };
 
-        prism::EngineParams params;
-        params.amount01 = 0.0f; // 直通，仅测输入/输出增益级
-        params.mix01 = 1.0f;
-        params.inputDb = 6.0f;
+        // 低电平、无压缩：PUSH 只是被输出级抵消的增益级。
+        prism::EngineParams lowParams;
+        lowParams.amount01 = 0.0f;
+        lowParams.mix01 = 1.0f;
+        lowParams.pushDb = 0.0f;
+        const auto lowPush0 = renderLevelDb (lowParams, 0.01f);
+        lowParams.pushDb = 12.0f;
+        const auto lowPush12 = renderLevelDb (lowParams, 0.01f);
+        const auto lowDifference = std::abs (lowPush12 - lowPush0);
+        logMessage ("low level (-40 dBFS): PUSH 0 = " + juce::String (lowPush0, 3)
+                    + " dB, PUSH 12 = " + juce::String (lowPush12, 3)
+                    + " dB, difference " + juce::String (lowDifference, 3) + " dB");
+        expectLessOrEqual (lowDifference, 0.05);
 
-        params.push01 = 0.0f;
-        const auto push0Db = measureGainDb (params);
-        logMessage ("PUSH 0 %, INPUT +6 dB: " + juce::String (push0Db, 3) + " dB");
-        expectWithinAbsoluteError (push0Db, 6.0, 0.01);
+        // 压缩加深：PUSH 抬高进入压缩器的电平，输出级抵消后剩下的就是额外 GR。
+        constexpr float twelveDbfs = 0.25118864f;
+        prism::EngineParams compressionParams;
+        compressionParams.amount01 = 1.0f;
+        compressionParams.mix01 = 1.0f;
 
-        params.push01 = 1.0f;
-        const auto push100Db = measureGainDb (params);
-        const auto push100OutputStageDb = push100Db - params.inputDb;
-        logMessage ("PUSH 100 %, INPUT +6 dB: net " + juce::String (push100Db, 3)
-                    + " dB, output stage " + juce::String (push100OutputStageDb, 3) + " dB");
-        expectWithinAbsoluteError (push100Db, 0.0, 0.01);
-        expectWithinAbsoluteError (push100OutputStageDb, -6.0, 0.01);
+        compressionParams.pushDb = 0.0f;
+        const auto compressedPush0 = renderLevelDb (compressionParams, twelveDbfs);
+        compressionParams.pushDb = 12.0f;
+        const auto compressedPush12 = renderLevelDb (compressionParams, twelveDbfs);
+        const auto extraReduction = compressedPush0 - compressedPush12;
+        logMessage ("-12 dBFS compression: PUSH 0 = " + juce::String (compressedPush0, 3)
+                    + " dB, PUSH 12 = " + juce::String (compressedPush12, 3)
+                    + " dB, extra reduction " + juce::String (extraReduction, 3) + " dB");
+        expectGreaterOrEqual (extraReduction, 4.0);
 
-        params.push01 = 0.5f;
-        const auto push50Db = measureGainDb (params);
-        const auto push50OutputStageDb = push50Db - params.inputDb;
-        logMessage ("PUSH 50 %, INPUT +6 dB: net " + juce::String (push50Db, 3)
-                    + " dB, output stage " + juce::String (push50OutputStageDb, 3) + " dB");
-        expectWithinAbsoluteError (push50Db, 3.0, 0.02);
-        expectWithinAbsoluteError (push50OutputStageDb, -3.0, 0.02);
+        // 0–24 dB 全范围：有限且输出不越界。
+        prism::EngineParams sweepParams;
+        sweepParams.amount01 = 1.0f;
+        sweepParams.mix01 = 1.0f;
+
+        juce::AudioBuffer<float> sweepInput (2, 24000);
+        fillSine (sweepInput, 1000.0, 0.25f);
+
+        bool finite = true;
+        float peak = 0.0f;
+
+        for (float pushDb = 0.0f; pushDb <= 24.0f; pushDb += 4.0f)
+        {
+            sweepParams.pushDb = pushDb;
+            const auto output = renderEngine (sweepParams, sweepInput, kProcessBlock);
+
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < output.getNumSamples(); ++i)
+                {
+                    const auto value = output.getReadPointer (ch)[i];
+                    finite = finite && std::isfinite (value);
+                    peak = juce::jmax (peak, std::abs (value));
+                }
+        }
+
+        logMessage ("PUSH 0..24 dB sweep: peak " + juce::String (peak, 6)
+                    + ", finite " + (finite ? "yes" : "no"));
+        expect (finite);
+        expectLessOrEqual (peak, 1.0f);
     }
 
     void testSmoothing()

@@ -56,7 +56,7 @@ struct Spec
 // 范围与默认值照 spec 第 6 节。
 inline constexpr std::array<Spec, 6> kSpecs { {
     { input, "INPUT", -12.0f, 24.0f, 0.0f, " dB", 1 },
-    { push, "PUSH", 0.0f, 100.0f, 0.0f, " %", 0 },
+    { push, "PUSH", 0.0f, 24.0f, 0.0f, " dB", 1 },
     { amount, "AMOUNT", 0.0f, 100.0f, 50.0f, " %", 0 },
     { spectrum, "SPECTRUM", -100.0f, 100.0f, 0.0f, " %", 0 },
     { mix, "MIX", 0.0f, 100.0f, 100.0f, " %", 0 },
@@ -104,9 +104,9 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     for (const auto& spec : parameters::kSpecs)
     {
-        // PUSH 是整数百分比；其余连续参数保持默认连续范围，只在显示层取整。
+        // PUSH 以 0.1 dB 为步进；其余连续参数保持默认连续范围，只在显示层取整。
         const auto interval = juce::String (spec.id) == juce::String (parameters::push)
-                                  ? 1.0f
+                                  ? 0.1f
                                   : 0.0f;
         const juce::NormalisableRange<float> range (spec.minValue, spec.maxValue, interval);
 

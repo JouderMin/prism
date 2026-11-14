@@ -33,7 +33,7 @@ constexpr float kMaxAmountDriveDb = 18.0f;
 // SPECTRUM=±1 时，最低段与最高段的驱动差 ±6 dB。
 constexpr float kSpectrumTiltDb = 6.0f;
 
-// 参数平滑：一阶低通，时间常数 4 ms，5τ 正好 20 ms（约 99.3%）。
+// 参数平滑：一阶低通，时间常数 4 ms，5τ 正好 20 ms（约 99.3%）。PUSH 与输入/输出共用。
 constexpr double kParamSmoothingSeconds = 0.004;
 
 // auto-gain：500 ms 一阶低通跟踪每段压缩量；dB 均值每 32 样本更新，
@@ -56,6 +56,7 @@ PrismDsp::PrismDsp()
     spectrum_.snap (defaults.spectrum);
     mix_.snap (defaults.mix01);
     inputGain_.snap (1.0f);
+    pushGain_.snap (1.0f);
     outputGain_.snap (1.0f);
 
     for (auto& value : autoGainStart_)
@@ -123,6 +124,7 @@ void PrismDsp::prepare (double sampleRate, int maxBlockSize, int numChannels)
     spectrum_.prepare (sampleRate_, kParamSmoothingSeconds);
     mix_.prepare (sampleRate_, kParamSmoothingSeconds);
     inputGain_.prepare (sampleRate_, kParamSmoothingSeconds);
+    pushGain_.prepare (sampleRate_, kParamSmoothingSeconds);
     outputGain_.prepare (sampleRate_, kParamSmoothingSeconds);
 
     reset();
@@ -166,6 +168,7 @@ void PrismDsp::reset()
     spectrum_.snapToTarget();
     mix_.snapToTarget();
     inputGain_.snapToTarget();
+    pushGain_.snapToTarget();
     outputGain_.snapToTarget();
 }
 
@@ -176,18 +179,18 @@ void PrismDsp::setParams (const EngineParams& params) noexcept
     targets_.mix01 = juce::jlimit (0.0f, 1.0f, params.mix01);
     targets_.inputDb = juce::jlimit (-12.0f, 24.0f, params.inputDb);
     targets_.outputDb = juce::jlimit (-24.0f, 12.0f, params.outputDb);
-    targets_.push01 = juce::jlimit (0.0f, 1.0f, params.push01);
+    targets_.pushDb = juce::jlimit (0.0f, 24.0f, params.pushDb);
     targets_.delta = params.delta;
 
     amount_.setTarget (targets_.amount01);
     spectrum_.setTarget (targets_.spectrum);
     mix_.setTarget (targets_.mix01);
     inputGain_.setTarget (decibelsToGain (targets_.inputDb));
+    pushGain_.setTarget (decibelsToGain (targets_.pushDb));
 
-    // PUSH 与 OUTPUT 共用同一个 4 ms 线性平滑器：有效输出 dB =
-    // outputDb − push01·inputDb，100% 时正好抵消 INPUT 的增益。
-    outputGain_.setTarget (decibelsToGain (targets_.outputDb
-                                           - targets_.push01 * targets_.inputDb));
+    // PUSH 与 OUTPUT 共用 4 ms 平滑：输出级 = outputDb − pushDb。
+    // PUSH 前置增益会被输出级等量削减，静态净响度不变。
+    outputGain_.setTarget (decibelsToGain (targets_.outputDb - targets_.pushDb));
 }
 
 void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
@@ -201,10 +204,10 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
         return;
     }
 
-    // 第一遍：输入增益逐样本平滑，写入预分配缓冲，同时作为干声源。
+    // 第一遍：输入增益 → PUSH 增益，逐样本平滑，写入预分配缓冲，同时作为干声源。
     for (int i = 0; i < numSamples; ++i)
     {
-        const auto gain = inputGain_.next();
+        const auto gain = inputGain_.next() * pushGain_.next();
 
         for (int ch = 0; ch < numChannels; ++ch)
             inputGainBuffer_.getWritePointer (ch)[i] = buffer.getReadPointer (ch)[i] * gain;

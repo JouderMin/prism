@@ -25,7 +25,7 @@ JUCE 8.0.7 + CMake + C++20。当前提供 AU、VST3、Standalone 三种目标，
 | 名称 | 范围 | 默认 | 作用 |
 |---|---|---|---|
 | INPUT | −12–+24 dB | 0 | 输入增益 |
-| PUSH | 0–100 % | 0 | 按比例用 INPUT 抵消输出级增益；100 % 时净电平不变 |
+| PUSH | 0–24 dB | 0 | 压缩前额外增益级；输出级同步减同样 dB，保持最终响度 |
 | AMOUNT | 0–100 % | 50 | 驱动量，映射到光强，最大 18 dB |
 | SPECTRUM | −100–+100 % | 0 | 光谱倾斜，负值压低频段、正值压高频段，±6 dB |
 | MIX | 0–100 % | 100 | 干湿比 |
@@ -48,7 +48,7 @@ JUCE 8.0.7 + CMake + C++20。当前提供 AU、VST3、Standalone 三种目标，
 
 ## 当前状态
 
-AU、VST3、Standalone 均可构建并通过验证：`auval -v aufx Prsm Stgz` 为 AU VALIDATION SUCCEEDED，VST3 在 pluginval 1.0.4 严格度 10 下为 SUCCESS，38 条自动化测试通过。
+AU、VST3、Standalone 均可构建并通过验证：`auval -v aufx Prsm Stgz` 为 AU VALIDATION SUCCEEDED，VST3 在 pluginval 1.0.4 严格度 10 下为 SUCCESS，39 条自动化测试通过。
 
 默认 FFT 后端是 vendored pffft；Windows x64 上 juce 后端的 filterbank 约慢 10×、total 约慢 8.5×。Apple M3 本机 `PrismBench`（48 kHz、立体声、块 128）约 filterbank 52.8 / opto+mix 19.4 / total 72.1 µs/block；用 juce 回退时为 110.8 / 19.8 / 130.6 µs/block。回退只需 configure 时加 `-DPRISM_FFT_BACKEND=juce`。
 

@@ -104,8 +104,8 @@ void PrismAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     params.mix01 = mixParam->load (std::memory_order_relaxed) * 0.01f;
     params.inputDb = inputParam->load (std::memory_order_relaxed);
     params.outputDb = outputParam->load (std::memory_order_relaxed);
-    params.push01 = pushParam != nullptr
-                  ? pushParam->load (std::memory_order_relaxed) * 0.01f
+    params.pushDb = pushParam != nullptr
+                  ? pushParam->load (std::memory_order_relaxed)
                   : 0.0f;
     params.delta = deltaParam != nullptr
                 && deltaParam->load (std::memory_order_relaxed) > 0.5f;
@@ -140,6 +140,16 @@ void PrismAudioProcessor::setStateInformation (const void* data, int sizeInBytes
     auto incoming = juce::ValueTree::fromXml (*xml);
     const auto version = static_cast<int> (incoming.getProperty ("version", 1));
 
+    // v4 之前 PUSH 是 0–100 %；当前 v4 的 PUSH 是 0–24 dB。
+    // 旧 v4 状态里的 >24 只可能来自百分比语义，先记下来，替换后归零。
+    auto legacyV4Push = -1.0f;
+
+    if (version == 4)
+        if (const auto pushChild = incoming.getChildWithProperty (
+                juce::Identifier ("id"), juce::String (prism::parameters::push));
+            pushChild.isValid())
+            legacyV4Push = static_cast<float> (pushChild.getProperty ("value", 0.0));
+
     apvts.replaceState (incoming);
 
     // v1 没有 DELTA；v2/v3 的 DELTA 读实际值。v1–v3 都还没有 PUSH，
@@ -159,6 +169,11 @@ void PrismAudioProcessor::setStateInformation (const void* data, int sizeInBytes
             juce::Identifier ("id"), juce::String ("link"));
         if (linkChild.isValid())
             apvts.state.removeChild (linkChild, nullptr);
+    }
+    else if (legacyV4Push > 24.0f)
+    {
+        if (auto* pushParameter = apvts.getParameter (prism::parameters::push))
+            pushParameter->setValueNotifyingHost (0.0f);
     }
 
     apvts.state.setProperty (juce::Identifier ("version"), 4, nullptr);

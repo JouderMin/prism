@@ -38,7 +38,7 @@ struct ExpectedParam
 // spec 第 6 节：6 个连续参数 + DELTA 开关，顺序固定。
 constexpr std::array<ExpectedParam, 7> kExpectedParams { {
     { "input", "INPUT", -12.0f, 24.0f, 0.0f },
-    { "push", "PUSH", 0.0f, 100.0f, 0.0f },
+    { "push", "PUSH", 0.0f, 24.0f, 0.0f },
     { "amount", "AMOUNT", 0.0f, 100.0f, 50.0f },
     { "spectrum", "SPECTRUM", -100.0f, 100.0f, 0.0f },
     { "mix", "MIX", 0.0f, 100.0f, 100.0f },
@@ -46,7 +46,7 @@ constexpr std::array<ExpectedParam, 7> kExpectedParams { {
     { "delta", "DELTA", 0.0f, 1.0f, 0.0f },
 } };
 
-constexpr std::array<float, 7> kRoundTripValues { { 9.5f, 37.0f, 77.0f, -42.0f, 33.0f, -13.25f, 1.0f } };
+constexpr std::array<float, 7> kRoundTripValues { { 9.5f, 12.0f, 77.0f, -42.0f, 33.0f, -13.25f, 1.0f } };
 
 // 读数格式：33.33 / 12.345 / -0.04 / 最小 / 最大 / 默认 的期望字符串。
 struct FormatCase
@@ -59,8 +59,8 @@ struct FormatCase
 constexpr std::array<FormatCase, 6> kFormatCases { {
     { "input",    { 33.33f, 12.345f, -0.04f, -12.0f, 24.0f, 0.0f },
                   { "33.3 dB", "12.3 dB", "0.0 dB", "-12.0 dB", "24.0 dB", "0.0 dB" } },
-    { "push",     { 33.33f, 12.345f, -0.04f, 0.0f, 100.0f, 0.0f },
-                  { "33 %", "12 %", "0 %", "0 %", "100 %", "0 %" } },
+    { "push",     { 12.345f, 24.0f, -0.04f, 0.0f, 24.0f, 0.0f },
+                  { "12.3 dB", "24.0 dB", "0.0 dB", "0.0 dB", "24.0 dB", "0.0 dB" } },
     { "amount",   { 33.33f, 12.345f, -0.04f, 0.0f, 100.0f, 50.0f },
                   { "33 %", "12 %", "0 %", "0 %", "100 %", "50 %" } },
     { "spectrum", { 33.33f, 12.345f, -0.04f, -100.0f, 100.0f, 0.0f },
@@ -159,9 +159,10 @@ public:
             expect (push != nullptr);
             if (push != nullptr)
             {
-                expectEquals (push->getText (0.0f, 0), juce::String ("0 %"));
-                expectEquals (push->getText (0.5f, 0), juce::String ("50 %"));
-                expectEquals (push->getText (1.0f, 0), juce::String ("100 %"));
+                expectEquals (push->getText (0.0f, 0), juce::String ("0.0 dB"));
+                expectEquals (push->getText (0.5f, 0), juce::String ("12.0 dB"));
+                expectEquals (push->getText (1.0f, 0), juce::String ("24.0 dB"));
+                expectWithinAbsoluteError (push->getNormalisableRange().interval, 0.1f, 1.0e-4f);
             }
         }
 
@@ -254,7 +255,7 @@ public:
 
             PrismAudioProcessor destination;
             setParameter (destination, "delta", 1.0f);
-            setParameter (destination, "push", 50.0f);
+            setParameter (destination, "push", 12.0f);
 
             destination.setStateInformation (legacyState.getData(),
                                               static_cast<int> (legacyState.getSize()));
@@ -277,7 +278,7 @@ public:
             legacy.getStateInformation (legacyState);
 
             PrismAudioProcessor destination;
-            setParameter (destination, "push", 50.0f);
+            setParameter (destination, "push", 12.0f);
             destination.setStateInformation (legacyState.getData(),
                                               static_cast<int> (legacyState.getSize()));
 
@@ -315,7 +316,7 @@ public:
             legacy.getStateInformation (legacyState);
 
             PrismAudioProcessor destination;
-            setParameter (destination, "push", 50.0f);
+            setParameter (destination, "push", 12.0f);
             destination.setStateInformation (legacyState.getData(),
                                               static_cast<int> (legacyState.getSize()));
 
@@ -334,6 +335,36 @@ public:
             const auto linkChild = destination.apvts.state.getChildWithProperty (
                 juce::Identifier ("id"), juce::String ("link"));
             expect (! linkChild.isValid(), "migration must remove stale LINK state");
+
+            expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
+        }
+
+        beginTest ("legacy v4 percentage PUSH migrates to 0 dB");
+
+        {
+            PrismAudioProcessor legacy;
+            auto legacyTree = legacy.apvts.copyState();
+            auto pushChild = legacyTree.getChildWithProperty (
+                juce::Identifier ("id"), juce::String ("push"));
+            expect (pushChild.isValid());
+
+            if (pushChild.isValid())
+                pushChild.setProperty ("value", 50.0, nullptr);
+
+            // 直接序列化修改后的 ValueTree，避免 copyState 的 flush 把 50 覆盖回参数值。
+            juce::MemoryBlock legacyState;
+            if (const auto xml = legacyTree.createXml())
+                juce::AudioProcessor::copyXmlToBinary (*xml, legacyState);
+
+            PrismAudioProcessor destination;
+            setParameter (destination, "push", 12.0f);
+            destination.setStateInformation (legacyState.getData(),
+                                              static_cast<int> (legacyState.getSize()));
+
+            const auto* push = destination.apvts.getRawParameterValue ("push");
+            expect (push != nullptr);
+            if (push != nullptr)
+                expectWithinAbsoluteError (push->load(), 0.0f, 1.0e-4f);
 
             expectEquals (static_cast<int> (destination.apvts.state.getProperty ("version")), 4);
         }

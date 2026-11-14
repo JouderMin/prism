@@ -39,14 +39,15 @@ struct EngineParams
     float mix01 = 1.0f;     // 0..1，干湿比
     float inputDb = 0.0f;   // -12..+24 dB
     float outputDb = 0.0f;  // -24..+12 dB
-    float push01 = 0.0f;    // 0..1，按比例用 INPUT 抵消输出级增益
+    float pushDb = 0.0f;    // 0..24 dB，压缩前额外增益；输出级同步削减
     bool delta = false;     // true 时输出处理差信号（out − 对齐后的干声）
 };
 
 /** 7 段光电压缩器引擎。
 
-    数据流：输入增益 → Filterbank 分频（6 段）→ 第 7 段按恒等式重建
-    → 每段光电链路 → 每段 auto-gain → 求和 → 干湿混合 → 输出增益。
+    数据流：输入增益 → PUSH 增益 → Filterbank 分频（6 段）→ 第 7 段按恒等式重建
+    → 每段光电链路 → 每段 auto-gain → 求和 → 干湿混合 → 输出增益（扣除 PUSH）。
+    PUSH 只提高进入压缩器的电平，输出级再减掉同样的 dB，静态净响度不变。
 
     延迟只来自 Filterbank（taps/2 + 128 = 1152 样本）。干声支路用同样长度的
     延时线对齐，引擎本身不额外增加缓冲延迟。
@@ -147,6 +148,7 @@ private:
     SmoothedValue spectrum_;
     SmoothedValue mix_;
     SmoothedValue inputGain_;
+    SmoothedValue pushGain_;
     SmoothedValue outputGain_;
 
     EngineParams targets_;

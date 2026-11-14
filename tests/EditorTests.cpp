@@ -161,9 +161,9 @@ public:
             if (pushKnob != nullptr)
             {
                 expectWithinAbsoluteError (pushKnob->getValue(), 0.0, 1.0e-3);
-                expectEquals (pushKnob->getTextFromValue (0.0), juce::String ("0 %"));
-                expectEquals (pushKnob->getTextFromValue (50.0), juce::String ("50 %"));
-                expectEquals (pushKnob->getTextFromValue (100.0), juce::String ("100 %"));
+                expectEquals (pushKnob->getTextFromValue (0.0), juce::String ("0.0 dB"));
+                expectEquals (pushKnob->getTextFromValue (12.0), juce::String ("12.0 dB"));
+                expectEquals (pushKnob->getTextFromValue (24.0), juce::String ("24.0 dB"));
             }
 
             expect (spectrumKnob != nullptr);
@@ -278,7 +278,7 @@ public:
         };
 
         setPlainValue ("input", 3.7f);
-        setPlainValue ("push", 50.0f);
+        setPlainValue ("push", 12.0f);
         setPlainValue ("spectrum", 25.0f);
         setPlainValue ("amount", 37.0f);
         setPlainValue ("delta", 1.0f);
@@ -306,7 +306,7 @@ public:
                 expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("3.7 dB"));
 
             if (slider->getName() == "PUSH")
-                expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("50 %"));
+                expectEquals (slider->getTextFromValue (slider->getValue()), juce::String ("12.0 dB"));
         }
 
         if (auto* typedEditor = dynamic_cast<PrismAudioProcessorEditor*> (snapshotEditor.get()))
