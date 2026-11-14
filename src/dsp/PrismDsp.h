@@ -81,6 +81,16 @@ public:
     /** 平滑后的 AMOUNT，测试与界面用。 */
     [[nodiscard]] float currentAmount01() const noexcept { return amount_.current(); }
 
+    /** 测试用：当前每段 auto-gain 线性增益（1 = 未补偿）。 */
+    [[nodiscard]] std::array<float, kNumBands> currentAutoGainForTesting() const noexcept
+    {
+        return autoGainCurrent_;
+    }
+
+    /** auto-gain 补偿（dB）：只在带内平均增益低于目标时提升，最多 +12 dB。
+        targetDb 为期望的带内平均增益；PUSH 使目标下降到 −pushDb。 */
+    static float autoGainCompensationDb (float averageDb, float gainDb, float targetDb) noexcept;
+
     [[nodiscard]] double sampleRate() const noexcept { return sampleRate_; }
     [[nodiscard]] int maxBlockSize() const noexcept { return maxBlockSize_; }
 
@@ -150,6 +160,7 @@ private:
     SmoothedValue inputGain_;
     SmoothedValue pushGain_;
     SmoothedValue outputGain_;
+    SmoothedValue agcTargetDb_;
 
     EngineParams targets_;
 };

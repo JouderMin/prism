@@ -90,6 +90,7 @@ public:
         testLatency();
         testDelta();
         testPush();
+        testAgcPushTarget();
         testSmoothing();
     }
 
@@ -379,6 +380,170 @@ private:
                     + ", finite " + (finite ? "yes" : "no"));
         expect (finite);
         expectLessOrEqual (peak, 1.0f);
+    }
+
+    void testAgcPushTarget()
+    {
+        beginTest ("auto-gain target follows PUSH and stops fighting its attenuation");
+
+        // push=0 时目标为 0 dB，公式必须与旧实现逐位一致。
+        float maxLegacyDifference = 0.0f;
+
+        for (float averageDb = -24.0f; averageDb <= 0.0f; averageDb += 1.5f)
+            for (float gainDb = -24.0f; gainDb <= 0.0f; gainDb += 1.5f)
+            {
+                auto legacy = juce::jmin (-averageDb, -gainDb);
+                legacy = juce::jlimit (0.0f, 12.0f, legacy);
+
+                if (legacy < 0.1f)
+                    legacy = 0.0f;
+
+                const auto current = prism::PrismDsp::autoGainCompensationDb (
+                    averageDb, gainDb, 0.0f);
+                maxLegacyDifference = juce::jmax (maxLegacyDifference,
+                                                  std::abs (current - legacy));
+            }
+
+        logMessage ("push=0 AGC compensation max difference from old formula: "
+                    + juce::String (maxLegacyDifference, 12) + " dB");
+        expectLessOrEqual (maxLegacyDifference, 1.0e-6f);
+
+        // 目标 -12 dB 时，补偿后不得越过目标，也不得把高于目标的增益往下压。
+        for (float averageDb = -24.0f; averageDb <= -13.0f; averageDb += 1.0f)
+            for (float gainDb = -24.0f; gainDb <= -13.0f; gainDb += 1.0f)
+            {
+                const auto compensation = prism::PrismDsp::autoGainCompensationDb (
+                    averageDb, gainDb, -12.0f);
+                expectLessOrEqual (averageDb + compensation, -12.0f + 1.0e-4f);
+                expectLessOrEqual (gainDb + compensation, -12.0f + 1.0e-4f);
+            }
+
+        expectEquals (prism::PrismDsp::autoGainCompensationDb (-5.0f, -5.0f, -12.0f), 0.0f);
+
+        constexpr int kLength = 144000;  // 3 s
+        constexpr int kMeasureLength = 48000;
+        constexpr int kMeasureStart = kLength - kMeasureLength;
+
+        const auto renderLevelDb = [] (const prism::EngineParams& params, float amplitude)
+        {
+            juce::AudioBuffer<float> input (2, kLength);
+            fillSine (input, 1000.0, amplitude);
+            const auto output = renderEngine (params, input, kProcessBlock);
+
+            const auto inputLevel = rmsOf (input, kMeasureStart, kMeasureLength, 0);
+            const auto outputLevel = rmsOf (output, kMeasureStart, kMeasureLength, 0);
+            return 20.0 * std::log10 (juce::jmax (outputLevel, 1.0e-12)
+                                      / juce::jmax (inputLevel, 1.0e-12));
+        };
+
+        prism::EngineParams loudParams;
+        loudParams.amount01 = 1.0f;
+        loudParams.mix01 = 1.0f;
+        loudParams.pushDb = 12.0f;
+
+        const auto loudLevel = renderLevelDb (loudParams, 0.25118864f);  // -12 dBFS
+        logMessage ("push=12 dB, -12 dBFS steady level change: "
+                    + juce::String (loudLevel, 3) + " dB (AGC target -12 dB)");
+        expectLessOrEqual (loudLevel, -11.8);
+        expectGreaterThan (loudLevel, -14.5);
+
+        // -40 dBFS 时压缩器只轻微作用，AGC 必须保持 1.0（不提升）。
+        prism::PrismDsp quietDsp;
+        quietDsp.setParams (loudParams);
+        quietDsp.prepare (kSampleRate, kProcessBlock, 2);
+        juce::AudioBuffer<float> quietInput (2, kLength);
+        fillSine (quietInput, 1000.0, 0.01f);
+        processInBlocks (quietDsp, quietInput, kProcessBlock);
+
+        const auto quietGains = quietDsp.currentAutoGainForTesting();
+        float maxQuietGain = 0.0f;
+        float minQuietGain = 10.0f;
+
+        for (const auto gain : quietGains)
+        {
+            maxQuietGain = juce::jmax (maxQuietGain, gain);
+            minQuietGain = juce::jmin (minQuietGain, gain);
+        }
+
+        const auto quietLevel = renderLevelDb (loudParams, 0.01f);
+        logMessage ("push=12 dB, -40 dBFS steady level change: "
+                    + juce::String (quietLevel, 3) + " dB, AGC gain "
+                    + juce::String (minQuietGain, 6) + ".." + juce::String (maxQuietGain, 6));
+        expectWithinAbsoluteError (maxQuietGain, 1.0f, 1.0e-3f);
+        expectWithinAbsoluteError (minQuietGain, 1.0f, 1.0e-3f);
+
+        // PUSH 从 0 平滑扫到 24 dB：不产生 NaN/Inf，输出有限。
+        prism::PrismDsp dsp;
+        prism::EngineParams sweepParams;
+        sweepParams.amount01 = 1.0f;
+        sweepParams.mix01 = 1.0f;
+        dsp.setParams (sweepParams);
+        dsp.prepare (kSampleRate, kProcessBlock, 2);
+
+        juce::AudioBuffer<float> sweepInput (2, kLength);
+        fillSine (sweepInput, 1000.0, 0.25f);
+        juce::AudioBuffer<float> sweepOutput (sweepInput);
+        bool finite = true;
+        float peak = 0.0f;
+
+        for (int offset = 0; offset < kLength; offset += kProcessBlock)
+        {
+            const auto count = juce::jmin (kProcessBlock, kLength - offset);
+            sweepParams.pushDb = 24.0f * static_cast<float> (offset)
+                               / static_cast<float> (kLength);
+            dsp.setParams (sweepParams);
+            juce::AudioBuffer<float> view (sweepOutput.getArrayOfWritePointers(),
+                                           sweepOutput.getNumChannels(), offset, count);
+            dsp.processBlock (view);
+        }
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kLength; ++i)
+            {
+                const auto value = sweepOutput.getReadPointer (ch)[i];
+                finite = finite && std::isfinite (value);
+                peak = juce::jmax (peak, std::abs (value));
+            }
+
+        logMessage ("PUSH 0..24 dB ramp: peak " + juce::String (peak, 6)
+                    + ", finite " + (finite ? "yes" : "no"));
+        expect (finite);
+        expectLessOrEqual (peak, 4.0f);
+
+        // 冲激延迟：PUSH 0 与 12 dB 都仍在 1152。
+        for (const auto pushDb : { 0.0f, 12.0f })
+        {
+            prism::EngineParams params;
+            params.amount01 = 0.0f;
+            params.pushDb = pushDb;
+            params.mix01 = 1.0f;
+
+            juce::AudioBuffer<float> impulse (2, 4096);
+            impulse.clear();
+            impulse.setSample (0, 0, 1.0f);
+            const auto output = renderEngine (params, impulse, kProcessBlock);
+
+            int peakIndex = 0;
+            float peakValue = 0.0f;
+
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < output.getNumSamples(); ++i)
+                {
+                    const auto value = std::abs (output.getReadPointer (ch)[i]);
+
+                    if (value > peakValue)
+                    {
+                        peakValue = value;
+                        peakIndex = i;
+                    }
+                }
+
+            logMessage ("impulse latency at PUSH " + juce::String (pushDb, 1)
+                        + " dB: sample " + juce::String (peakIndex)
+                        + ", value " + juce::String (peakValue, 6));
+            expectEquals (peakIndex, 1152);
+            expectWithinAbsoluteError (peakValue, 1.0f, 1.0e-2f);
+        }
     }
 
     void testSmoothing()

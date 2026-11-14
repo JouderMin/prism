@@ -58,6 +58,7 @@ PrismDsp::PrismDsp()
     inputGain_.snap (1.0f);
     pushGain_.snap (1.0f);
     outputGain_.snap (1.0f);
+    agcTargetDb_.snap (0.0f);
 
     for (auto& value : autoGainStart_)
         value = 1.0f;
@@ -126,6 +127,7 @@ void PrismDsp::prepare (double sampleRate, int maxBlockSize, int numChannels)
     inputGain_.prepare (sampleRate_, kParamSmoothingSeconds);
     pushGain_.prepare (sampleRate_, kParamSmoothingSeconds);
     outputGain_.prepare (sampleRate_, kParamSmoothingSeconds);
+    agcTargetDb_.prepare (sampleRate_, kParamSmoothingSeconds);
 
     reset();
 }
@@ -170,6 +172,18 @@ void PrismDsp::reset()
     inputGain_.snapToTarget();
     pushGain_.snapToTarget();
     outputGain_.snapToTarget();
+    agcTargetDb_.snap (-20.0f * std::log10 (juce::jmax (pushGain_.current(), kMinLogGain)));
+}
+
+float PrismDsp::autoGainCompensationDb (float averageDb, float gainDb, float targetDb) noexcept
+{
+    auto compensationDb = juce::jmin (targetDb - averageDb, targetDb - gainDb);
+    compensationDb = juce::jlimit (0.0f, kAutoGainLimitDb, compensationDb);
+
+    if (compensationDb < kAutoGainDeadbandDb)
+        compensationDb = 0.0f;
+
+    return compensationDb;
 }
 
 void PrismDsp::setParams (const EngineParams& params) noexcept
@@ -218,10 +232,15 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
                                         numChannels, numSamples);
     filterbank_.processBlock (inputView, bands_);
 
+    // PUSH 的 AGC 目标随平滑后的 PUSH 增益下降：PUSH 造成的衰减是“应有”的，
+    // auto-gain 只补偿超出该基线的长期偏低，不再把 PUSH 的压缩补回来。
+    agcTargetDb_.setTarget (-20.0f * std::log10 (juce::jmax (pushGain_.current(), kMinLogGain)));
+
     // 第二遍：检测、光电曲线、auto-gain、求和、干湿、输出增益。
     for (int i = 0; i < numSamples; ++i)
     {
         const auto amount = amount_.next();
+        const auto agcTargetDb = agcTargetDb_.next();
         const auto spectrum = spectrum_.next();
         const auto mix = mix_.next();
         const auto outputGain = outputGain_.next();
@@ -259,12 +278,8 @@ void PrismDsp::processBlock (juce::AudioBuffer<float>& buffer) noexcept
                 auto& averageDb = autoGainDb_[bandIndex];
                 averageDb += autoGainCoefficient_ * (gainDb - averageDb);
 
-                // 反向补偿：不超过当前压缩量，也不超过 ±12 dB；均值 <0.1 dB 不补偿。
-                auto compensationDb = juce::jmin (-averageDb, -gainDb);
-                compensationDb = juce::jlimit (0.0f, kAutoGainLimitDb, compensationDb);
-
-                if (compensationDb < kAutoGainDeadbandDb)
-                    compensationDb = 0.0f;
+                // 只在低于目标时补偿，且不超过目标、不超过 +12 dB；<0.1 dB 不补偿。
+                const auto compensationDb = autoGainCompensationDb (averageDb, gainDb, agcTargetDb);
 
                 autoGainStart_[bandIndex] = autoGainCurrent_[bandIndex];
                 autoGainTarget_[bandIndex] = decibelsToGain (compensationDb);
